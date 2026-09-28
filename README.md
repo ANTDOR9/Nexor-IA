@@ -16,7 +16,7 @@ NEXOR tiene dos partes que trabajan juntas:
 
 | Parte | Qué hace | Estado |
 |---|---|:---:|
-| **NEXOR REGISTER** | App Android para registrar cada gasto en 3 toques y hacer el cierre del día en menos de 90 segundos. | ✅ v0.1 |
+| **NEXOR REGISTER** | App Android para registrar el consumo del día a día y el dinero. | ✅ v0.1 |
 | **NEXOR IA** | Modelo de lenguaje local que lee esos registros, encuentra patrones y propone acciones concretas. | 🟡 En curso |
 
 La idea es simple: **primero medir, después optimizar.** NEXOR REGISTER captura los datos reales del día a día y NEXOR IA los convierte en decisiones.
@@ -29,16 +29,10 @@ La idea es simple: **primero medir, después optimizar.** NEXOR REGISTER captura
   <img src="docs/img/nexor-register-icon.png" width="140" alt="Ícono de NEXOR REGISTER">
 </p>
 
-<p align="center"><b>Registro rápido de gastos y cierre del día</b><br>
+<p align="center"><b>Consumo y dinero, día a día</b><br>
 <sub>HTML + CSS + JavaScript puro · empaquetado a APK con Capacitor · 100 % offline</sub></p>
 
-- **Registrar:** botones rápidos (papa rellena, pasaje, gaseosa…), motivo del gasto, si fue planificado o impulso, y ingresos.
-- **Cierre del día:** sueño, energía, ánimo, comidas, agua, gaseosas, tiempo de pantalla, estudio, proyectos, inglés y ejercicio.
-- **Historial:** resumen de los últimos 7 días y un gráfico de chatarra frente al resto del gasto.
-- **Exportar:** JSON para NEXOR IA, CSV para Excel y respaldo completo. Se comparte por WhatsApp o Drive.
-- **Identidad:** tema oscuro morado, rosa y cian, con efectos al registrar y vibración.
-
-Los datos se guardan solo en el celular. Nada sale de ahí salvo que tú lo exportes.
+Registra el consumo del día a día y el dinero, de forma rápida y simple. Los datos se quedan en el celular y se exportan para que NEXOR IA los analice.
 
 📂 Código, instalación y generación del APK: [`nexor-register/`](nexor-register/README.md)
 
@@ -51,8 +45,8 @@ Los datos se guardan solo en el celular. Nada sale de ahí salvo que tú lo expo
 ```
  NEXOR REGISTER (celular)            NEXOR IA (PC, local)
  ────────────────────────            ──────────────────────────────
- gastos · cierres del día   ──JSON──▶  lee el registro semanal
- ingresos · hábitos                    detecta patrones
+ consumo del día a día      ──JSON──▶  lee el registro semanal
+ dinero                                detecta patrones
                                        compara con semanas anteriores
                                        propone UNA acción medible
 ```
@@ -144,6 +138,6 @@ A medida que avance NEXOR IA se sumarán `Modelfile`, `scripts/` y los prompts d
 
 ## 👤 Autor
 
-**Anthony**: estudiante de Ingeniería de Software con IA (SENATI, Arequipa, Perú) y practicante de desarrollo de software.
+**Anthony** · Arequipa, Perú
 
 <p align="center"><i>Última actualización: 28 de septiembre de 2026</i></p>
