@@ -63,6 +63,16 @@ En Android Studio:
 
 **Cada vez que cambies algo en `www/`:** ejecuta `npx cap sync android` y vuelve a darle a Run.
 
+## Identidad visual
+
+- Paleta: morado `#8b5cf6`, rosa `#ec4899`, cian `#22d3ee` sobre fondo `#0b0616`.
+- El ícono y la pantalla de inicio salen de `assets/` (las fuentes en SVG están en `assets/src/`).
+  Si cambias el diseño, vuelve a generar los recursos de Android con:
+
+```powershell
+npx @capacitor/assets generate --android --iconBackgroundColor "#150827" --iconBackgroundColorDark "#150827" --splashBackgroundColor "#0b0616" --splashBackgroundColorDark "#0b0616"
+```
+
 > 💡 OneDrive: la carpeta `android/` genera muchos archivos de compilación. Si OneDrive se pone lento
 > o bloquea archivos durante la compilación, pausa la sincronización mientras compilas.
 

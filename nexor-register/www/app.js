@@ -201,12 +201,83 @@ function cerrarDialogo(v) {
 let toastTimer = null;
 function aviso(msg, accion, fn, ms = 2500) {
   const t = $('#toast');
-  t.innerHTML = `<span>${esc(msg)}</span>` + (accion ? `<button>${esc(accion)}</button>` : '');
+  t.innerHTML = `<span>${esc(msg)}</span>` + (accion ? `<button>${esc(accion)}</button><i class="toast-bar" style="--t:${ms}ms"></i>` : '');
   if (accion) t.querySelector('button').onclick = () => { t.classList.remove('show'); fn(); };
   t.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove('show'), ms);
 }
+
+// ---------- Efectos visuales y vibración ----------
+const FX_COLORES = ['#a855f7', '#ec4899', '#22d3ee', '#f472b6', '#c084fc', '#67e8f9'];
+const reduceMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+const fx = {
+  haptic(tipo = 'light') {
+    const H = window.Capacitor?.Plugins?.Haptics;
+    if (H?.impact) { H.impact({ style: tipo === 'heavy' ? 'HEAVY' : tipo === 'medium' ? 'MEDIUM' : 'LIGHT' }).catch(() => {}); return; }
+    if (navigator.vibrate) navigator.vibrate(tipo === 'heavy' ? [18, 40, 24] : 12);
+  },
+  exito() {
+    const H = window.Capacitor?.Plugins?.Haptics;
+    if (H?.notification) { H.notification({ type: 'SUCCESS' }).catch(() => {}); return; }
+    if (navigator.vibrate) navigator.vibrate([15, 50, 25]);
+  },
+  centro(el) { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; },
+  burst(x, y, n = 26, colores = FX_COLORES) {
+    if (reduceMotion()) return;
+    const capa = $('#fx');
+    for (let i = 0; i < n; i++) {
+      const p = document.createElement('i');
+      const ang = (Math.PI * 2 * i) / n + Math.random() * .5;
+      const dist = 50 + Math.random() * 90;
+      p.className = 'particle' + (Math.random() < .35 ? ' star' : '');
+      p.style.cssText = `left:${x}px;top:${y}px;--s:${4 + Math.random() * 6}px;--c:${colores[i % colores.length]};` +
+        `--x:${Math.cos(ang) * dist}px;--y:${Math.sin(ang) * dist - 20}px;--d:${600 + Math.random() * 500}ms`;
+      capa.appendChild(p);
+      setTimeout(() => p.remove(), 1200);
+    }
+  },
+  flotar(el, texto, ingreso = false) {
+    if (reduceMotion()) return;
+    const { x, y } = fx.centro(el);
+    const f = document.createElement('div');
+    f.className = 'float-amt' + (ingreso ? ' in' : '');
+    f.textContent = texto;
+    f.style.left = x + 'px';
+    f.style.top = (y - 20) + 'px';
+    $('#fx').appendChild(f);
+    setTimeout(() => f.remove(), 1200);
+  },
+  brillo(el) { el.classList.remove('glow'); void el.offsetWidth; el.classList.add('glow'); },
+  fijar(el, valor) { el._anim = null; el.textContent = soles(valor); },
+  contar(el, desde, hasta, ms = 650) {
+    if (reduceMotion() || desde === hasta) { fx.fijar(el, hasta); return; }
+    const t0 = performance.now();
+    const token = el._anim = {};
+    const paso = t => {
+      if (el._anim !== token) return;
+      const k = Math.min(1, (t - t0) / ms);
+      const e = 1 - Math.pow(1 - k, 3);
+      el.textContent = soles(desde + (hasta - desde) * e);
+      if (k < 1) requestAnimationFrame(paso);
+    };
+    requestAnimationFrame(paso);
+  },
+  ripple(e) {
+    const b = e.target.closest('.btn, .preset, .chip, .scale button, .toggle button, .nav button, .stepper button, .lista .acts button');
+    if (!b || b.disabled || reduceMotion()) return;
+    const r = b.getBoundingClientRect();
+    const d = Math.max(r.width, r.height) * 2.2;
+    const s = document.createElement('span');
+    s.className = 'ripple';
+    s.style.cssText = `width:${d}px;height:${d}px;left:${e.clientX - r.left - d / 2}px;top:${e.clientY - r.top - d / 2}px`;
+    b.appendChild(s);
+    setTimeout(() => s.remove(), 600);
+  }
+};
+// Estado para animar lo que se acaba de agregar
+let totales = { hoy: 0, semana: 0 };
+let celebrar = null; // { id, monto, ingreso }
 
 const chipsHTML = (list, sel, name, cls = '') =>
   `<div class="chips" data-chips="${name}">` +
@@ -233,8 +304,16 @@ async function renderRegistrar() {
   const gastos = regs.filter(r => r.tipo === 'gasto');
   const sum = arr => arr.reduce((a, g) => a + g.monto, 0);
   const gh = gastos.filter(g => g.fecha === h);
-  $('#t-hoy').textContent = soles(sum(gh));
-  $('#t-semana').textContent = soles(sum(gastos));
+  const nuevos = { hoy: sum(gh), semana: sum(gastos) };
+  const cel = celebrar;
+  if (cel && !cel.ingreso) {
+    fx.contar($('#t-hoy'), totales.hoy, nuevos.hoy);
+    fx.contar($('#t-semana'), totales.semana, nuevos.semana);
+  } else {
+    fx.fijar($('#t-hoy'), nuevos.hoy);
+    fx.fijar($('#t-semana'), nuevos.semana);
+  }
+  totales = nuevos;
   const jh = sum(gh.filter(g => JUNK.includes(g.categoria)));
   const js = sum(gastos.filter(g => JUNK.includes(g.categoria)));
   $('#t-hoy-ch').textContent = jh ? `chatarra ${soles(jh)}` : '';
@@ -248,14 +327,24 @@ async function renderRegistrar() {
   $('#presets').onclick = e => {
     const b = e.target.closest('.preset');
     if (!b) return;
+    b.classList.remove('tapped'); void b.offsetWidth; b.classList.add('tapped');
+    fx.haptic();
     if (b.dataset.id === 'otro') abrirGasto(null);
     else abrirGasto(presets.find(p => p.id === b.dataset.id));
   };
 
   const lista = regs.filter(r => r.fecha === h && r.tipo !== 'cierre_dia')
     .sort((a, b) => (b.hora || '').localeCompare(a.hora || '') || (b.creado_en || '').localeCompare(a.creado_en || ''));
-  renderListaRegistros($('#hoy-lista'), lista, renderRegistrar);
+  renderListaRegistros($('#hoy-lista'), lista, renderRegistrar, cel?.id);
   await renderBannerCierre();
+  if (cel) {
+    celebrar = null;
+    const card = $('#t-hoy').closest('.total');
+    const { x, y } = fx.centro(card);
+    fx.brillo(card);
+    fx.burst(x, y, cel.ingreso ? 18 : 28, cel.ingreso ? ['#34d399', '#22d3ee', '#67e8f9', '#a855f7'] : FX_COLORES);
+    fx.flotar(card, (cel.ingreso ? '+' : '−') + soles(cel.monto), cel.ingreso);
+  }
 }
 
 async function renderBannerCierre() {
@@ -271,7 +360,7 @@ async function renderBannerCierre() {
   box.querySelector('button').onclick = () => { $('#cierre-fecha').value = objetivo; irA('cierre'); };
 }
 
-function renderListaRegistros(ul, lista, refrescar) {
+function renderListaRegistros(ul, lista, refrescar, resaltarId) {
   if (!lista.length) { ul.innerHTML = '<li class="empty">Sin registros</li>'; return; }
   ul.innerHTML = lista.map(r => {
     if (r.tipo === 'ingreso') return `<li data-id="${r.id}"><div class="main"><b>Ingreso · ${esc(label(FUENTES, r.fuente))}</b>
@@ -285,6 +374,7 @@ function renderListaRegistros(ul, lista, refrescar) {
       <span class="amt">${soles(r.monto)}</span>
       <div class="acts"><button data-a="edit" aria-label="Editar">✎</button><button data-a="del" aria-label="Borrar">🗑</button></div></li>`;
   }).join('');
+  if (resaltarId) ul.querySelector(`li[data-id="${resaltarId}"]`)?.classList.add('nuevo');
   ul.onclick = async e => {
     const b = e.target.closest('button[data-a]');
     if (!b) return;
@@ -363,6 +453,8 @@ function abrirGasto(preset, existente, alGuardar) {
       };
       if (existente) gasto.editado_en = new Date().toISOString();
       await DB.put('registros', gasto);
+      fx.exito();
+      if (!existente) celebrar = { id: gasto.id, monto, ingreso: false };
       cerrarHoja();
       if (existente) aviso('Actualizado');
       else aviso(`Guardado · ${soles(monto)}`, 'Deshacer', async () => {
@@ -389,8 +481,11 @@ function abrirIngreso(existente, alGuardar) {
       root.querySelector('#i-monto').classList.toggle('err', !monto);
       root.querySelector('[data-chips="fuente"]').classList.toggle('err', !r.fuente);
       if (!monto || !r.fuente) { aviso('Completa lo marcado en rojo'); return; }
+      const idIng = existente?.id || uuid();
+      fx.exito();
+      if (!existente) celebrar = { id: idIng, monto, ingreso: true };
       await DB.put('registros', {
-        id: existente?.id || uuid(), tipo: 'ingreso', fecha: root.querySelector('#i-fecha').value || r.fecha,
+        id: idIng, tipo: 'ingreso', fecha: root.querySelector('#i-fecha').value || r.fecha,
         monto, fuente: r.fuente, nota: root.querySelector('#i-nota').value.trim() || null,
         creado_en: existente?.creado_en || new Date().toISOString()
       });
@@ -525,6 +620,10 @@ async function renderCierre(fecha) {
     if (c.energia == null) faltan.push('energía');
     if (c.animo == null) faltan.push('ánimo');
     await DB.put('registros', c);
+    const btn = form.querySelector('button[type=submit]');
+    const { x, y } = fx.centro(btn);
+    fx.burst(x, y, 34);
+    fx.exito();
     aviso(faltan.length ? `Guardado (falta: ${faltan.join(', ')})` : 'Cierre guardado', null, null, 3000);
     renderCierre(fecha);
   };
@@ -561,14 +660,14 @@ async function renderHistorial() {
   const bars = datos.map((d, i) => {
     const x = gap + i * (bw + gap);
     const total = d.junk + d.resto;
-    return `<rect x="${x}" y="${y(d.resto)}" width="${bw}" height="${(H - pb) - y(d.resto)}" rx="3" fill="#2f81f7"/>
-      <rect x="${x}" y="${y(total)}" width="${bw}" height="${y(d.resto) - y(total)}" rx="3" fill="#f0883e"/>
-      ${total ? `<text x="${x + bw / 2}" y="${y(total) - 4}" text-anchor="middle" font-size="9" fill="#8b949e">${Math.round(total)}</text>` : ''}
-      <text x="${x + bw / 2}" y="${H - 6}" text-anchor="middle" font-size="10" fill="${d.f === h ? '#e6edf3' : '#8b949e'}">${DIAS[dow(d.f)]}</text>`;
+    return `<rect x="${x}" y="${y(d.resto)}" width="${bw}" height="${(H - pb) - y(d.resto)}" rx="3" fill="#22d3ee"/>
+      <rect x="${x}" y="${y(total)}" width="${bw}" height="${y(d.resto) - y(total)}" rx="3" fill="#f472b6"/>
+      ${total ? `<text x="${x + bw / 2}" y="${y(total) - 4}" text-anchor="middle" font-size="9" fill="#a99cc8">${Math.round(total)}</text>` : ''}
+      <text x="${x + bw / 2}" y="${H - 6}" text-anchor="middle" font-size="10" fill="${d.f === h ? '#f5f3ff' : '#a99cc8'}">${DIAS[dow(d.f)]}</text>`;
   }).join('');
   $('#grafico').innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Gasto por día">
-    <line x1="0" x2="${W}" y1="${H - pb}" y2="${H - pb}" stroke="#30363d"/>${bars}</svg>
-    <div class="legend"><span><i style="background:#f0883e"></i>Chatarra + bebida</span><span><i style="background:#2f81f7"></i>Resto</span></div>`;
+    <line x1="0" x2="${W}" y1="${H - pb}" y2="${H - pb}" stroke="#34245a"/>${bars}</svg>
+    <div class="legend"><span><i style="background:#f472b6"></i>Chatarra + bebida</span><span><i style="background:#22d3ee"></i>Resto</span></div>`;
 
   // Lista de días
   const porDia = {};
@@ -774,7 +873,8 @@ async function iniciar() {
   if (!(await getPresets()).length) await seedPresets();
   if (navigator.storage?.persist) { try { await navigator.storage.persist(); } catch { /* sin soporte */ } }
 
-  document.querySelectorAll('.nav button').forEach(b => b.onclick = () => irA(b.dataset.view));
+  document.addEventListener('pointerdown', fx.ripple, { passive: true });
+  document.querySelectorAll('.nav button').forEach(b => b.onclick = () => { if (b.dataset.view !== vistaActual) fx.haptic(); irA(b.dataset.view); });
   $('#overlay').onclick = cerrarHoja;
   $('#btn-ingreso').onclick = () => abrirIngreso(null);
   $('#cierre-fecha').onchange = e => { if (e.target.value) renderCierre(e.target.value); };

@@ -1,0 +1,9 @@
+<g transform="translate(512 512)">
+  <circle r="300" fill="url(#halo)"/>
+  <polygon points="0,-270 234,-135 234,135 0,270 -234,135 -234,-135" fill="none" stroke="url(#neon)" stroke-width="22" stroke-linejoin="round" opacity=".55"/>
+  <g filter="url(#glow)" fill="none" stroke="url(#neon)" stroke-width="54" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M-105 125 V-125 L105 125 V-125"/>
+  </g>
+  <circle cx="150" cy="-160" r="26" fill="#22d3ee" filter="url(#glow)"/>
+  <circle cx="-150" cy="160" r="14" fill="#ec4899" filter="url(#glow)"/>
+</g>

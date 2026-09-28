@@ -2,7 +2,7 @@
   "name": "nexor-register",
   "version": "0.1.0",
   "private": true,
-  "description": "NEXOR REGISTER: registro rápido de gastos y cierre del día. Fuente de datos para NEXOR IA.",
+  "description": "NEXOR REGISTER: registro r\u00e1pido de gastos y cierre del d\u00eda. Fuente de datos para NEXOR IA.",
   "scripts": {
     "sync": "npx cap sync android",
     "open": "npx cap open android",
@@ -13,6 +13,7 @@
     "@capacitor/app": "^8.1.1",
     "@capacitor/core": "^8.5.2",
     "@capacitor/filesystem": "^8.1.3",
+    "@capacitor/haptics": "^8.0.2",
     "@capacitor/share": "^8.0.2"
   },
   "devDependencies": {
