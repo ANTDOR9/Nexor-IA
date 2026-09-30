@@ -107,7 +107,7 @@ ollama run nexor --think=false
 | 1 | Motor local: Ollama + Qwen3.5 funcionando en español · [diagnóstico](reportes/fase-1-diagnostico-motor.md) | ✅ Hecho |
 | 2 | **NEXOR REGISTER v0.1**: app Android de registro con exportación JSON | ✅ Hecho |
 | 3 | `Modelfile` de NEXOR: system prompt en español que conoce el formato de los registros | 🟡 En curso |
-| 4 | Script de análisis semanal: lee el JSON exportado y genera el informe | ⏳ Pendiente |
+| 4 | Script de análisis semanal: lee el JSON exportado y genera el informe (`scripts/finanzas.py`) | 🟡 Beta |
 | 5 | Memoria de NEXOR: comparar semanas y seguir la evolución | ⏳ Pendiente |
 | 6 | Sincronización directa entre la app y NEXOR IA, sin exportar a mano | ⏳ Futuro |
 
@@ -119,7 +119,10 @@ ollama run nexor --think=false
 Nexor-IA/
 ├── README.md               ← este archivo
 ├── Modelfile               ← configuración y personalidad de NEXOR
-├── reportes/               ← diagnósticos y benchmarks de cada fase
+├── analizar_semana.bat     ← doble clic: genera el reporte de la semana
+├── scripts/finanzas.py     ← valida el JSON, calcula el resumen y consulta a NEXOR
+├── datos/                  ← JSON exportados (los reales no se suben)
+├── reportes/               ← diagnósticos, benchmarks y reportes semanales
 ├── docs/img/               ← imágenes del README
 └── nexor-register/         ← app Android de registro
     ├── www/                ← la app (HTML, CSS, JS)
@@ -128,7 +131,7 @@ Nexor-IA/
     └── android/            ← proyecto Android (Capacitor)
 ```
 
-A medida que avance NEXOR IA se sumarán `scripts/` y los prompts de análisis.
+
 
 ---
 

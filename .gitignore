@@ -1,0 +1,13 @@
+# Datos personales exportados de NEXOR REGISTER (no se suben)
+datos/**/*.json
+!datos/README.md
+
+# Modelos y videos
+*.gguf
+*.mp4
+*.mkv
+
+# Python
+__pycache__/
+.venv/
+venv/
