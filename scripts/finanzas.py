@@ -10,12 +10,18 @@ Uso:
     python scripts/finanzas.py datos/archivo.json
     python scripts/finanzas.py datos/archivo.json --sin-ia        # solo números
     python scripts/finanzas.py datos/archivo.json --modelo qwen3.5:2b
+    python scripts/finanzas.py --cumpli si                        # cumpliste el reto anterior (si/no/parcial)
+
+NEXOR te conoce gracias a dos archivos locales que no se suben a GitHub:
+    perfil.local.md      quién eres, tus metas y cómo quieres que te hable
+    memoria/semanas.json lo que pasó cada semana y el compromiso que aceptaste
 
 Regla de oro: Python hace las cuentas; la IA solo interpreta.
 """
 
 import argparse
 import json
+import re
 import sys
 import time
 from collections import Counter, defaultdict
@@ -27,6 +33,11 @@ RAIZ = Path(__file__).resolve().parent.parent       # carpeta del repo
 CARPETA_REPORTES = RAIZ / "reportes"
 OLLAMA_URL = "http://localhost:11434"
 MODELO_POR_DEFECTO = "nexor"
+
+CARPETA_MEMORIA = RAIZ / "memoria"                 # historial semanal (no se sube)
+ARCHIVO_PERFIL = RAIZ / "perfil.local.md"          # quién eres (no se sube)
+PERFIL_MAX_CARACTERES = 3000                        # ~750 tokens: el contexto es de 4096
+SEMANAS_EN_MEMORIA = 3                              # cuántas semanas previas ve NEXOR
 
 # Referencia del diagnóstico base (27/09/2026): chatarra estimada por semana
 CHATARRA_BASE_SEMANAL = 95.0
@@ -146,6 +157,23 @@ def calcular(datos):
         franjas[franja(g["hora"])] += g["monto"]
     impulsivos = [g for g in gastos if not g["planificado"]]
 
+    # Qué se compra y qué días en cada franja (para que el reto ataque cosas reales)
+    detalle_franja = {}
+    for fr in ["mañana", "tarde", "noche"]:
+        compras = [g for g in compras_chatarra if franja(g["hora"]) == fr]
+        items = defaultdict(lambda: [0, 0.0])
+        for g in compras:
+            items[g["item"]][0] += 1
+            items[g["item"]][1] += g["monto"]
+        top = sorted(items.items(), key=lambda kv: kv[1][1], reverse=True)[:3]
+        dias_fr = sorted({date.fromisoformat(g["fecha"]).weekday() for g in compras})
+        lugares = Counter(g["lugar"] for g in compras if g.get("lugar"))
+        detalle_franja[fr] = {
+            "items": [{"item": k, "veces": v[0], "monto": round(v[1], 2)} for k, v in top],
+            "dias": [DIAS_SEMANA[d] for d in dias_fr],
+            "lugar_frecuente": lugares.most_common(1)[0][0] if lugares else None,
+        }
+
     # Sueño: solo valores plausibles
     suenos = [c for c in cierres if c["sueno"].get("horas") is not None and 3 <= c["sueno"]["horas"] <= 12]
     sueno_prom = round(sum(c["sueno"]["horas"] for c in suenos) / len(suenos), 2) if suenos else None
@@ -187,6 +215,8 @@ def calcular(datos):
         "motivos_chatarra": dict(motivos_chatarra.most_common()),
         "chatarra_emocional_pct": round(emocionales / len(compras_chatarra) * 100, 1) if compras_chatarra else 0,
         "chatarra_por_franja": {k: round(v, 2) for k, v in franjas.most_common()},
+        "chatarra_franja_prom_diario": {k: round(franjas.get(k, 0) / n_dias, 2) for k in ["mañana", "tarde", "noche"]},
+        "detalle_franja": detalle_franja,
         "impulsivos_pct": round(len(impulsivos) / len(gastos) * 100, 1) if gastos else 0,
         "sueno_promedio_h": sueno_prom,
         "dias_sueno_bajo": sum(1 for c in suenos if c["sueno"]["horas"] < SUENO_MINIMO),
@@ -197,24 +227,318 @@ def calcular(datos):
                                 ["pantalla_celular", "juegos", "estudio", "proyectos", "ingles", "ejercicio"]},
         "ingresos_total": ingresos_total,
         "balance": round(ingresos_total - total, 2),
+        "comidas_caseras": comidas.get("casera", 0),
+        "pantalla_prom_min": prom_tiempo("pantalla_celular"),
     }
 
 
-# ── 3. Pedirle a NEXOR que lo interprete ──────────────────────
-def construir_prompt(r, avisos):
-    """Mensaje corto con cifras ya calculadas. Nada de JSON crudo: no cabe ni hace falta."""
+# ── 3. Perfil y memoria: lo que hace que NEXOR te conozca ──────
+def cargar_perfil():
+    """Lee perfil.local.md (sin comentarios HTML). Si no existe, NEXOR trabaja sin conocerte."""
+    if not ARCHIVO_PERFIL.exists():
+        return None
+    texto = ARCHIVO_PERFIL.read_text(encoding="utf-8")
+    texto = re.sub(r"<!--.*?-->", "", texto, flags=re.S)           # quita las instrucciones
+    texto = "\n".join(l for l in texto.splitlines() if l.strip())   # quita líneas vacías
+    if len(texto) > PERFIL_MAX_CARACTERES:
+        print(f"⚠️  perfil.local.md es largo ({len(texto)} caracteres); se recorta a {PERFIL_MAX_CARACTERES}.")
+        texto = texto[:PERFIL_MAX_CARACTERES]
+    return texto
+
+
+def archivo_memoria(beta):
+    """Las semanas beta van aparte para no mezclarse con tu historial real."""
+    return CARPETA_MEMORIA / ("semanas-beta.json" if beta else "semanas.json")
+
+
+def cargar_memoria(beta):
+    ruta = archivo_memoria(beta)
+    if not ruta.exists():
+        return []
+    return json.loads(ruta.read_text(encoding="utf-8"))
+
+
+def guardar_memoria(beta, semana, r, foco, reto, evaluacion, cumpli_usuario):
+    """Guarda (o reemplaza) la semana actual con su foco, su reto y la evaluación del reto anterior."""
+    memoria = [m for m in cargar_memoria(beta) if m["semana"] != semana]
+    if cumpli_usuario and memoria:
+        memoria[-1]["cumplido_segun_usuario"] = cumpli_usuario
+    if evaluacion and memoria:
+        memoria[-1]["resultado"] = evaluacion["resultado"]
+    memoria.append({
+        "semana": semana,
+        "rango": r["rango"],
+        "gasto_total": r["gasto_total"],
+        "chatarra_total": r["chatarra_total"],
+        "chatarra_pct": r["chatarra_pct"],
+        "chatarra_emocional_pct": r["chatarra_emocional_pct"],
+        "impulsivos_pct": r["impulsivos_pct"],
+        "sueno_promedio_h": r["sueno_promedio_h"],
+        "foco": foco,            # qué se mide la próxima semana y con qué objetivo
+        "reto": reto,            # el reto que propuso NEXOR
+        "resultado": None,       # lo llena Python la semana siguiente
+    })
+    memoria.sort(key=lambda m: m["semana"])
+    CARPETA_MEMORIA.mkdir(exist_ok=True)
+    archivo_memoria(beta).write_text(json.dumps(memoria, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+# ── 4. Focos: Python elige qué mejorar y lo mide solo ─────────
+# Cada foco sabe cómo medirse con los datos de NEXOR REGISTER.
+FOCOS = {
+    "chatarra_noche":  {"descripcion": "Chatarra después de las 18:00", "unidad": "S/ por día", "mejor": "menos",
+                        "medir": lambda r: r["chatarra_franja_prom_diario"]["noche"]},
+    "chatarra_tarde":  {"descripcion": "Chatarra entre las 12:00 y las 18:00", "unidad": "S/ por día", "mejor": "menos",
+                        "medir": lambda r: r["chatarra_franja_prom_diario"]["tarde"]},
+    "chatarra_mañana": {"descripcion": "Chatarra antes de las 12:00", "unidad": "S/ por día", "mejor": "menos",
+                        "medir": lambda r: r["chatarra_franja_prom_diario"]["mañana"]},
+    "sueno":           {"descripcion": "Horas de sueño por noche", "unidad": "h", "mejor": "más",
+                        "medir": lambda r: r["sueno_promedio_h"]},
+    "comidas_caseras": {"descripcion": "Comidas caseras en la semana", "unidad": "comidas", "mejor": "más",
+                        "medir": lambda r: r["comidas_caseras"]},
+    "pantalla":        {"descripcion": "Minutos de celular por día", "unidad": "min", "mejor": "menos",
+                        "medir": lambda r: r["pantalla_prom_min"]},
+}
+
+
+# Ideas de reto por foco: todas son de HACER o REEMPLAZAR, nunca de dejar de comer.
+# NEXOR elige una y la adapta a tu horario. Puedes agregar las tuyas.
+RETOS = {
+    "chatarra_noche": [
+        "Cocinar el domingo una tanda (arroz, huevo, papa) y cenarla de lunes a viernes antes de las 20:00",
+        "Dejar lista en casa una alternativa para la noche (fruta, pan con huevo, agua) antes de salir por la mañana",
+        "Comprar el pan del día por la mañana con lista, para no tener que ir a la tienda en la noche",
+    ],
+    "chatarra_tarde": [
+        "Llevar almuerzo o un táper de casa los días de prácticas o de SENATI largo",
+        "Llevar una botella de agua y una fruta para el recreo o la salida",
+        "Planificar el almuerzo del día siguiente la noche anterior y dejarlo listo",
+    ],
+    "chatarra_mañana": [
+        "Desayunar en casa algo rápido (pan con huevo, avena) antes de salir",
+        "Llevar agua desde casa para no comprar gaseosa en el paradero",
+        "Preparar el desayuno la noche anterior para no salir con hambre",
+    ],
+    "sueno": [
+        "Poner una alarma a las 21:30 para dejar el celular cargando fuera de la cama",
+        "Cortar juegos y videos a una hora fija entre semana",
+        "Dejar la ropa y la mochila listas la noche anterior para acostarse antes",
+    ],
+    "comidas_caseras": [
+        "Cocinar dos veces por semana en lugar de una, en tandas para varios días",
+        "Hacer una lista de compras semanal con ingredientes para 3 comidas caseras",
+        "Aprender una receta nueva, simple y barata, cada semana",
+    ],
+    "pantalla": [
+        "Activar un límite diario de YouTube o Facebook en Bienestar digital",
+        "Reemplazar 30 minutos de videos en la noche por un bloque de inglés o de proyecto",
+        "Dejar el celular fuera del baño y fuera de la mesa",
+    ],
+}
+
+
+def formato(foco_id, valor):
+    """Cada foco con su unidad, para que nadie confunda soles con porcentajes."""
+    if valor is None:
+        return "sin datos"
+    u = FOCOS[foco_id]["unidad"]
+    if u.startswith("S/"):
+        return f"S/ {valor:.2f} por día"
+    if u == "h":
+        return f"{valor:.1f} h"
+    return f"{valor:g} {u}"
+
+
+def evaluar_reto(previa, r):
+    """Compara el foco de la semana anterior con los datos de esta semana. Sin opiniones: números."""
+    foco = (previa or {}).get("foco")
+    if not foco or foco.get("id") not in FOCOS:
+        return None
+    f = FOCOS[foco["id"]]
+    actual = f["medir"](r)
+    if actual is None:
+        return {**foco, "actual": None, "resultado": "sin datos"}
+    if f["mejor"] == "menos":
+        cumplido, mejoro = actual <= foco["objetivo"], actual < foco["inicial"]
+    else:
+        cumplido, mejoro = actual >= foco["objetivo"], actual > foco["inicial"]
+    resultado = "cumplido" if cumplido else ("parcial" if mejoro else "no cumplido")
+    return {**foco, "actual": actual, "resultado": resultado}
+
+
+def elegir_foco(r, evaluacion):
+    """El foco de la semana: si el reto anterior no se cumplió, se insiste; si no, se ataca el problema más grande."""
+    if evaluacion and evaluacion["resultado"] in ("no cumplido", "parcial"):
+        # Se mantiene el mismo foco y el mismo objetivo: constancia antes que novedad
+        return {**{k: evaluacion[k] for k in ("id", "descripcion", "objetivo")}, "inicial": evaluacion["actual"]}
+
+    def nuevo(foco_id, objetivo):
+        inicial = FOCOS[foco_id]["medir"](r)
+        return {"id": foco_id, "descripcion": FOCOS[foco_id]["descripcion"],
+                "inicial": inicial, "objetivo": objetivo}
+
+    ya_cumplido = evaluacion["id"] if evaluacion and evaluacion["resultado"] == "cumplido" else None
+    franjas = r["chatarra_franja_prom_diario"]
+    if r["chatarra_pct"] >= 40:
+        # la franja con más chatarra, sin repetir la que ya se cumplió
+        orden = sorted(franjas, key=franjas.get, reverse=True)
+        for fr in orden:
+            fid = f"chatarra_{fr}"
+            if fid != ya_cumplido and franjas[fr] > 0:
+                return nuevo(fid, round(franjas[fr] * 0.6, 1))      # bajar 40%: difícil pero posible
+    if r["sueno_promedio_h"] is not None and r["sueno_promedio_h"] < SUENO_MINIMO and ya_cumplido != "sueno":
+        return nuevo("sueno", round(min(r["sueno_promedio_h"] + 0.5, 7.0), 1))
+    if r["comidas_caseras"] < 7 and ya_cumplido != "comidas_caseras":
+        return nuevo("comidas_caseras", r["comidas_caseras"] + 3)
+    if r["pantalla_prom_min"]:
+        return nuevo("pantalla", round(r["pantalla_prom_min"] * 0.8))
+    return None
+
+
+# ── 5. El paquete para NEXOR ──────────────────────────────────
+def lista(dic, formato_valor):
+    """{'noche': 35} -> 'noche S/ 35.00, tarde ...' — siempre con unidades."""
+    return ", ".join(f"{k} {formato_valor(v)}" for k, v in dic.items()) or "sin datos"
+
+
+def hechos(r, avisos, previa):
+    """El resumen en frases con etiquetas y unidades exactas. Así un modelo 4B no mezcla métricas."""
+    s = lambda v: f"S/ {v:.2f}"
+    ch = r["chatarra_total"] or 1
+    emoc = sum(v for k, v in r["motivos_chatarra"].items() if k in MOTIVOS_EMOCIONALES)
+    f = [
+        f"- Días con registros: {r['dias_registrados']} (con cierre del día: {r['dias_con_cierre']}).",
+        f"- Gasto total: {s(r['gasto_total'])}. Promedio por día registrado: {s(r['gasto_promedio_diario'])}.",
+        f"- Gasto en chatarra y bebidas azucaradas: {s(r['chatarra_total'])} = {r['chatarra_pct']}% del gasto total.",
+        f"- Chatarra proyectada a 7 días: {s(r['chatarra_proyeccion_semanal'])} (el diagnóstico base estimaba "
+        f"S/ {CHATARRA_BASE_SEMANAL:.0f}).",
+        f"- Compras de chatarra según motivo: {lista(r['motivos_chatarra'], lambda v: f'{v} compras')}. "
+        f"En total, {emoc} de {r['compras_chatarra']} compras ({r['chatarra_emocional_pct']}%) fueron por "
+        f"estrés, aburrimiento, cansancio o antojo, no por hambre.",
+        f"- Chatarra según momento del día: " + ", ".join(
+            f"{k} {s(v)} ({v / ch * 100:.0f}% de la chatarra)" for k, v in r["chatarra_por_franja"].items()) + ".",
+        f"- Gastos no planificados (cualquier categoría): {r['impulsivos_pct']}% de la cantidad de gastos.",
+        f"- Día con más gasto: {r['peor_dia']['dia']}, {s(r['peor_dia']['monto'])}.",
+        f"- Gasto por categoría: {lista(r['por_categoria'], s)}.",
+        f"- Sueño promedio: {r['sueno_promedio_h']} h por noche. {r['dias_sueno_bajo']} de {r['dias_con_cierre']} "
+        f"noches registradas tuvieron menos de {SUENO_MINIMO} h.",
+    ]
+    if r["chatarra_prom_dias_sueno_bajo"] is not None and r["chatarra_prom_dias_sueno_ok"] is not None:
+        dif_sueno = r["chatarra_prom_dias_sueno_bajo"] - r["chatarra_prom_dias_sueno_ok"]
+        f.append(f"- Chatarra promedio en un día tras dormir poco: {s(r['chatarra_prom_dias_sueno_bajo'])}; "
+                 f"tras dormir bien: {s(r['chatarra_prom_dias_sueno_ok'])}. "
+                 f"Diferencia: {s(abs(dif_sueno))} {'MÁS' if dif_sueno >= 0 else 'MENOS'} por día tras dormir poco.")
+    f += [
+        f"- Comidas del día: {lista(r['comidas'], lambda v: f'{v} vez' if v == 1 else f'{v} veces')}.",
+        f"- Tiempo promedio por día: {lista({k: v for k, v in r['tiempo_promedio_min'].items() if v is not None}, lambda v: f'{v} min')}.",
+        f"- Ingresos registrados: {s(r['ingresos_total'])}. Diferencia entre ingresos y gastos registrados: "
+        f"{s(r['balance'])}. OJO: esto NO es ahorro confirmado (faltan gastos fijos y no se sabe cuánto quedó).",
+    ]
+    if previa:
+        d = r["chatarra_total"] - previa["chatarra_total"]
+        dg = r["gasto_total"] - previa["gasto_total"]
+        dif = lambda v: f"{'+' if v >= 0 else '-'}S/ {abs(v):.2f}"
+        f.append(f"- Frente a la semana {previa['semana']}: chatarra {dif(d)}, gasto total {dif(dg)}.")
+    if avisos:
+        f.append("- Avisos de calidad de datos: " + " | ".join(avisos))
+    return "\n".join(f)
+
+
+def texto_historial(previas):
+    if not previas:
+        return "Primera semana registrada: no hay historial."
+    return "\n".join(f"- Semana {m['semana']}: gasto S/ {m['gasto_total']:.2f}, chatarra S/ {m['chatarra_total']:.2f} "
+                     f"({m['chatarra_pct']}%), sueño {m['sueno_promedio_h']} h."
+                     for m in previas[-SEMANAS_EN_MEMORIA:])
+
+
+def texto_seguimiento(previa, evaluacion, cumpli_usuario):
+    if not evaluacion:
+        return "No hubo reto la semana anterior: es el primer reto."
+    t = (f"Reto anterior: \"{previa.get('reto') or 'sin texto'}\". Meta: {evaluacion['descripcion']} de "
+         f"{formato(evaluacion['id'], evaluacion['inicial'])} a {formato(evaluacion['id'], evaluacion['objetivo'])}. "
+         f"Resultado medido esta semana: {formato(evaluacion['id'], evaluacion['actual'])} → {evaluacion['resultado'].upper()}.")
+    if cumpli_usuario:
+        t += f" El usuario dice que lo cumplió: {cumpli_usuario}."
+    return t
+
+
+def texto_foco(foco, r):
+    if not foco:
+        return "No hay foco definido: propón el reto que más ayude según los datos."
+    t = [f"{foco['descripcion']}: esta semana {formato(foco['id'], foco['inicial'])}. "
+         f"Objetivo para la próxima semana: {formato(foco['id'], foco['objetivo'])} (promedio de TODOS los días). "
+         "El reto tiene que ayudar a llegar a ESE objetivo y se medirá automáticamente con ese número."]
+    if foco["id"].startswith("chatarra_"):
+        d = r["detalle_franja"][foco["id"].split("_", 1)[1]]
+        vez = lambda n: "1 vez" if n == 1 else f"{n} veces"
+        items = ", ".join(f"{x['item']} ({vez(x['veces'])}, S/ {x['monto']:.2f})" for x in d["items"])
+        t.append(f"Qué se compra en esa franja: {items or 'sin datos'}.")
+        t.append(f"Días en que pasa: {', '.join(d['dias']) or 'sin datos'}."
+                 + (f" Lugar más frecuente: {d['lugar_frecuente']}." if d["lugar_frecuente"] else ""))
+    ideas = RETOS.get(foco["id"], [])
+    if ideas:
+        t.append("IDEAS DE RETO (elige UNA y adáptala a mi horario real, con días y horas):")
+        t += [f"  {i}. {idea}" for i, idea in enumerate(ideas, 1)]
+    return "\n".join(t)
+
+
+def fechas_clave(perfil, hoy):
+    """Busca líneas '- AAAA-MM-DD: evento' en el perfil y calcula cuánto falta. La IA no calcula plazos."""
+    if not perfil:
+        return "Sin fechas clave."
+    salida = []
+    for fecha, evento in re.findall(r"(\d{4}-\d{2}-\d{2})\s*[:\-–]\s*(.+)", perfil):
+        dias = (date.fromisoformat(fecha) - hoy).days
+        if dias >= 0:
+            salida.append(f"- {evento.strip()}: faltan {dias} días (unas {round(dias / 7)} semanas).")
+    return "\n".join(salida) or "Sin fechas clave próximas."
+
+
+# Estructura obligatoria de la respuesta (Ollama la hace cumplir con "format")
+ESQUEMA = {
+    "type": "object",
+    "properties": {
+        "como_te_fue": {"type": "string"},
+        "seguimiento": {"type": "string"},
+        "lo_que_veo": {"type": "string"},
+        "reto": {"type": "string"},
+        "por_que_este_reto": {"type": "string"},
+        "pregunta": {"type": "string"},
+    },
+    "required": ["como_te_fue", "seguimiento", "lo_que_veo", "reto", "por_que_este_reto", "pregunta"],
+}
+
+
+def construir_prompt(r, avisos, perfil, previas, evaluacion, foco, cumpli_usuario):
+    """Quién eres + historial + esta semana + seguimiento + foco. Todo ya calculado por Python."""
+    previa = previas[-1] if previas else None
     return (
-        "Analiza mi semana. Todas las cifras ya están calculadas y son correctas: no las recalcules ni inventes otras.\n\n"
-        f"RESUMEN (soles):\n{json.dumps(r, ensure_ascii=False)}\n\n"
-        f"AVISOS DE CALIDAD DE DATOS:\n- " + ("\n- ".join(avisos) if avisos else "ninguno") + "\n\n"
-        "Referencia: el diagnóstico base estimó S/ 95 por semana en chatarra.\n"
-        "Responde con: 1) Números clave 2) Patrón principal 3) UNA sola acción medible para la próxima semana. "
-        "Máximo 200 palabras."
+        "Eres mi mentor. Escribe mi informe semanal en JSON con los campos pedidos.\n"
+        "Las cifras están calculadas y son correctas: cópialas tal cual, con su unidad (S/, %, h, min). No hagas cuentas.\n\n"
+        f"=== QUIÉN SOY ===\n{perfil or 'Sin perfil: no supongas nada sobre mi vida.'}\n\n"
+        f"=== HISTORIAL ===\n{texto_historial(previas)}\n\n"
+        f"=== ESTA SEMANA ({r['rango']['desde']} a {r['rango']['hasta']}) ===\n{hechos(r, avisos, previa)}\n\n"
+        f"=== SEGUIMIENTO (medido por el sistema) ===\n{texto_seguimiento(previa, evaluacion, cumpli_usuario)}\n\n"
+        f"=== FOCO DE LA PRÓXIMA SEMANA (elegido por el sistema) ===\n{texto_foco(foco, r)}\n\n"
+        f"=== FECHAS CLAVE (calculadas al {r['rango']['hasta']}) ===\n"
+        f"{fechas_clave(perfil, date.fromisoformat(r['rango']['hasta']))}\n\n"
+        "=== QUÉ VA EN CADA CAMPO ===\n"
+        "como_te_fue: 2-3 frases con las cifras más importantes. Reconoce algo que salió bien.\n"
+        "seguimiento: qué pasó con el reto anterior según el resultado medido. Si es el primero, dilo en una frase.\n"
+        "lo_que_veo: el patrón principal y por qué importa, conectado con mis metas y otras áreas de mi vida (3-4 frases). "
+        "Si mencionas un porcentaje, di de qué es (del gasto total o de la chatarra). Para plazos usa solo FECHAS CLAVE.\n"
+        "reto: elige UNA de las IDEAS DE RETO y adáptala a mi horario: qué hago, qué días y a qué hora. "
+        "Tiene que servir para TODOS los días en que pasa el problema, no solo uno. "
+        "Debe ser algo que HAGO (preparar, llevar, cambiar, reemplazar), nunca prohibir comer ni saltarme comidas.\n"
+        "por_que_este_reto: por qué este reto y no otro, con el dato que lo justifica (2 frases).\n"
+        "pregunta: una sola pregunta para reflexionar, sin sermón.\n"
+        "Tutéame. Máximo 280 palabras en total."
     )
 
 
 def preguntar_a_nexor(prompt, modelo):
-    """Llama a la API local de Ollama sin thinking. Devuelve (texto, métricas) o (None, error)."""
+    """Llama a Ollama sin thinking y con la estructura obligatoria. Devuelve (dict o None, métricas o error)."""
     try:
         import requests
     except ImportError:
@@ -225,6 +549,7 @@ def preguntar_a_nexor(prompt, modelo):
             "model": modelo,
             "messages": [{"role": "user", "content": prompt}],
             "think": False,          # sin thinking: segundos en vez de minutos
+            "format": ESQUEMA,       # respuesta en JSON con los campos fijos
             "stream": False,
         })
         resp.raise_for_status()
@@ -236,12 +561,16 @@ def preguntar_a_nexor(prompt, modelo):
             "tokens_s": round(data["eval_count"] / (data["eval_duration"] / 1e9), 1)
                         if data.get("eval_count") and data.get("eval_duration") else None,
         }
-        return data["message"]["content"].strip(), metricas
+        contenido = data["message"]["content"].strip()
+        try:
+            return json.loads(contenido), metricas
+        except json.JSONDecodeError:
+            return {"texto_libre": contenido}, metricas   # por si el modelo no respetó el JSON
     except Exception as e:  # Ollama apagado, modelo inexistente, etc.
         return None, f"no se pudo contactar a Ollama ({e}). ¿Está abierto? Prueba: ollama serve"
 
 
-# ── 4. Escribir el reporte ────────────────────────────────────
+# ── 6. Escribir el reporte ────────────────────────────────────
 def boton(texto, destino, color, detalle=None):
     """Botón estilo shields.io para GitHub: [texto | detalle]."""
     from urllib.parse import quote
@@ -257,13 +586,45 @@ def nombre_reporte(datos):
     return f"semana-{anio}-W{semana:02d}{sufijo}.md", f"{anio}-W{semana:02d}"
 
 
-def tabla(dic, col1, col2, formato=lambda v: v):
+def tabla(dic, col1, col2, formato_valor=lambda v: v):
     filas = [f"| {col1} | {col2} |", "|---|---:|"]
-    filas += [f"| {k} | {formato(v)} |" for k, v in dic.items()]
+    filas += [f"| {k} | {formato_valor(v)} |" for k, v in dic.items()]
     return "\n".join(filas)
 
 
-def escribir_reporte(datos, r, avisos, analisis, metricas, archivo_origen):
+ICONO_RESULTADO = {"cumplido": "✅", "parcial": "🟡", "no cumplido": "❌", "sin datos": "❔"}
+
+
+def seccion_mentor(respuesta, metricas, foco, evaluacion, con_perfil):
+    partes = ["## 🧭 NEXOR, tu mentor", ""]
+    if respuesta and "reto" in respuesta:
+        partes += [f"> 🎯 **Reto:** {respuesta['reto']}  "]
+    if foco:
+        partes += [f"> 📏 **Meta:** {foco['descripcion']}: de {formato(foco['id'], foco['inicial'])} a "
+                   f"{formato(foco['id'], foco['objetivo'])}. Se revisa sola la próxima semana."]
+    partes.append("")
+    if evaluacion:
+        partes += ["| Reto anterior | Inicio | Objetivo | Esta semana | Resultado |", "|---|---:|---:|---:|:---:|",
+                   f"| {evaluacion['descripcion']} | {formato(evaluacion['id'], evaluacion['inicial'])} | "
+                   f"{formato(evaluacion['id'], evaluacion['objetivo'])} | {formato(evaluacion['id'], evaluacion['actual'])} | "
+                   f"{ICONO_RESULTADO.get(evaluacion['resultado'], '')} {evaluacion['resultado']} |", ""]
+    if not respuesta:
+        return partes + [f"_Sin análisis de IA: {metricas}_"]
+    if "texto_libre" in respuesta:
+        partes += [respuesta["texto_libre"]]
+    else:
+        for titulo, clave in [("Cómo te fue", "como_te_fue"), ("Seguimiento", "seguimiento"),
+                              ("Lo que veo", "lo_que_veo"), ("Por qué este reto", "por_que_este_reto"),
+                              ("Pregunta para pensar", "pregunta")]:
+            texto = respuesta.get(clave, "").strip()
+            if texto:
+                partes += [f"### {titulo}", f"*{texto}*" if clave == "pregunta" else texto, ""]
+    partes += [f"<sub>Modelo `{metricas['modelo']}` · {metricas['segundos']} s · {metricas['tokens']} tokens · "
+               f"{metricas['tokens_s']} tokens/s · sin thinking · perfil {'cargado' if con_perfil else 'no encontrado'}</sub>"]
+    return partes
+
+
+def escribir_reporte(datos, r, avisos, respuesta, metricas, archivo_origen, foco, evaluacion, con_perfil):
     CARPETA_REPORTES.mkdir(exist_ok=True)
     nombre, semana = nombre_reporte(datos)
     s = lambda v: f"S/ {v:.2f}"
@@ -271,38 +632,29 @@ def escribir_reporte(datos, r, avisos, analisis, metricas, archivo_origen):
     desde, hasta = r["rango"]["desde"], r["rango"]["hasta"]
 
     partes = [
-        f"# 💰 Semana {semana}{' · BETA' if beta else ''}",
-        "",
-        boton("← Reportes", "README.md", "8b5cf6") + "\n" + boton("Inicio", "../README.md", "ec4899"),
-        "",
+        f"# 💰 Semana {semana}{' · BETA' if beta else ''}", "",
+        boton("← Reportes", "README.md", "8b5cf6") + "\n" + boton("Inicio", "../README.md", "ec4899"), "",
         f"> **Periodo:** {desde} a {hasta} · **Días registrados:** {r['dias_registrados']} · "
         f"**Días con cierre:** {r['dias_con_cierre']}",
     ]
     if beta:
         partes += [">", "> ⚠️ **Reporte BETA:** mezcla datos reales y simulados. Sirve para probar el sistema, no como diagnóstico."]
-
     partes += [
         "", "---", "", "## 📌 Números clave", "",
         "| Indicador | Valor |", "|---|---:|",
         f"| Gasto total | {s(r['gasto_total'])} |",
         f"| Promedio por día registrado | {s(r['gasto_promedio_diario'])} |",
-        f"| Chatarra + bebidas azucaradas | {s(r['chatarra_total'])} ({r['chatarra_pct']}%) |",
+        f"| Chatarra + bebidas azucaradas | {s(r['chatarra_total'])} ({r['chatarra_pct']}% del gasto) |",
         f"| Chatarra proyectada a 7 días | {s(r['chatarra_proyeccion_semanal'])} "
         f"({'+' if r['chatarra_vs_base'] >= 0 else ''}{r['chatarra_vs_base']:.2f} vs base de S/ {CHATARRA_BASE_SEMANAL:.0f}) |",
-        f"| Chatarra por motivos emocionales | {r['chatarra_emocional_pct']}% de las compras |",
-        f"| Gastos por impulso | {r['impulsivos_pct']}% |",
+        f"| Chatarra por motivos emocionales | {r['chatarra_emocional_pct']}% de las compras de chatarra |",
+        f"| Gastos no planificados | {r['impulsivos_pct']}% de los gastos |",
         f"| Peor día | {r['peor_dia']['dia']} {r['peor_dia']['fecha']} · {s(r['peor_dia']['monto'])} |",
-        f"| Sueño promedio | {r['sueno_promedio_h']} h · {r['dias_sueno_bajo']} días con menos de {SUENO_MINIMO} h |",
-        f"| Ingresos / balance | {s(r['ingresos_total'])} / {s(r['balance'])} |",
-        "", "---", "", "## 🤖 Análisis de NEXOR", "",
+        f"| Sueño promedio | {r['sueno_promedio_h']} h · {r['dias_sueno_bajo']} de {r['dias_con_cierre']} noches con menos de {SUENO_MINIMO} h |",
+        f"| Ingresos − gastos registrados | {s(r['ingresos_total'])} − {s(r['gasto_total'])} = {s(r['balance'])} *(no es ahorro confirmado)* |",
+        "", "---", "",
     ]
-    if analisis:
-        partes += [analisis, "",
-                   f"<sub>Modelo `{metricas['modelo']}` · {metricas['segundos']} s · "
-                   f"{metricas['tokens']} tokens · {metricas['tokens_s']} tokens/s · sin thinking</sub>"]
-    else:
-        partes += [f"_Sin análisis de IA: {metricas}_"]
-
+    partes += seccion_mentor(respuesta, metricas, foco, evaluacion, con_perfil)
     partes += [
         "", "---", "", "## 🔎 Detalle", "",
         "### Gasto por día", "", tabla(r["gasto_por_dia"], "Fecha", "Gasto", s), "",
@@ -310,9 +662,9 @@ def escribir_reporte(datos, r, avisos, analisis, metricas, archivo_origen):
         "### ¿Por qué compro chatarra?", "", tabla(r["motivos_chatarra"], "Motivo", "Compras"), "",
         "### ¿Cuándo compro chatarra?", "", tabla(r["chatarra_por_franja"], "Franja", "Monto", s), "",
         "### Sueño y chatarra", "",
-        f"- Días con menos de {SUENO_MINIMO} h de sueño: chatarra promedio de "
+        f"- Días tras dormir menos de {SUENO_MINIMO} h: chatarra promedio de "
         f"{s(r['chatarra_prom_dias_sueno_bajo']) if r['chatarra_prom_dias_sueno_bajo'] is not None else 'sin datos'}",
-        f"- Días con {SUENO_MINIMO} h o más: chatarra promedio de "
+        f"- Días tras dormir {SUENO_MINIMO} h o más: chatarra promedio de "
         f"{s(r['chatarra_prom_dias_sueno_ok']) if r['chatarra_prom_dias_sueno_ok'] is not None else 'sin datos'}",
         "", "### Comidas", "", tabla(r["comidas"], "Tipo", "Veces"), "",
         "### Tiempo promedio por día (min)", "",
@@ -325,23 +677,22 @@ def escribir_reporte(datos, r, avisos, analisis, metricas, archivo_origen):
 
     ruta = CARPETA_REPORTES / nombre
     ruta.write_text("\n".join(partes), encoding="utf-8")
-    actualizar_indice(nombre, semana, r, beta)
+    actualizar_indice(nombre, semana, r, beta, evaluacion)
     return ruta
 
 
-def actualizar_indice(nombre, semana, r, beta):
+def actualizar_indice(nombre, semana, r, beta, evaluacion):
     """Agrega (o reemplaza) la fila de esta semana en reportes/README.md."""
     indice = CARPETA_REPORTES / "README.md"
     if not indice.exists():
         return
     texto = indice.read_text(encoding="utf-8")
     titulo = f"Semana {semana}{' · BETA' if beta else ''}"
-    resumen = (f"Gasto S/ {r['gasto_total']:.2f} · chatarra {r['chatarra_pct']}% · "
-               f"sueño {r['sueno_promedio_h']} h")
+    reto_ant = f" · reto anterior {ICONO_RESULTADO.get(evaluacion['resultado'], '')}" if evaluacion else ""
+    resumen = f"Gasto S/ {r['gasto_total']:.2f} · chatarra {r['chatarra_pct']}% · sueño {r['sueno_promedio_h']} h{reto_ant}"
     fila = (f"| {titulo} | {r['rango']['desde']} a {r['rango']['hasta']} | {resumen} | "
             f"{boton('Abrir', nombre, '22d3ee', semana)} |")
     lineas = [l for l in texto.splitlines() if f"]({nombre})" not in l]   # quita la fila vieja
-    # inserta después de la última fila de la tabla
     ultima = max(i for i, l in enumerate(lineas) if l.startswith("|"))
     lineas.insert(ultima + 1, fila)
     indice.write_text("\n".join(lineas) + "\n", encoding="utf-8")
@@ -353,6 +704,8 @@ def main():
     p.add_argument("archivo", nargs="?", help="JSON exportado por NEXOR REGISTER (por defecto: el más reciente de datos/)")
     p.add_argument("--modelo", default=MODELO_POR_DEFECTO, help="modelo de Ollama (por defecto: nexor)")
     p.add_argument("--sin-ia", action="store_true", help="solo calcula los números, sin llamar a la IA")
+    p.add_argument("--cumpli", choices=["si", "no", "parcial"],
+                   help="tu opinión sobre el reto anterior (Python además lo mide con los datos)")
     a = p.parse_args()
 
     if not a.archivo:
@@ -365,17 +718,32 @@ def main():
     datos = cargar(a.archivo)
     avisos = validar(datos)
     resumen = calcular(datos)
+    beta = bool(datos.get("beta"))
+    _, semana = nombre_reporte(datos)
     print(f"📊 {resumen['dias_registrados']} días · gasto S/ {resumen['gasto_total']:.2f} · "
           f"chatarra {resumen['chatarra_pct']}% · {len(avisos)} avisos")
 
-    analisis, metricas = None, "se ejecutó con --sin-ia"
+    perfil = cargar_perfil()
+    previas = [m for m in cargar_memoria(beta) if m["semana"] < semana]
+    evaluacion = evaluar_reto(previas[-1] if previas else None, resumen)
+    foco = elegir_foco(resumen, evaluacion)
+    print(f"🧠 Perfil: {'sí' if perfil else 'no (crea perfil.local.md)'} · semanas en memoria: {len(previas)}")
+    if evaluacion:
+        print(f"🔁 Reto anterior: {evaluacion['descripcion']} → {evaluacion['resultado']}")
+    if foco:
+        print(f"🎯 Foco: {foco['descripcion']} · de {formato(foco['id'], foco['inicial'])} a {formato(foco['id'], foco['objetivo'])}")
+
+    respuesta, metricas = None, "se ejecutó con --sin-ia"
     if not a.sin_ia:
         print(f"🤖 Consultando a {a.modelo}…")
-        analisis, metricas = preguntar_a_nexor(construir_prompt(resumen, avisos), a.modelo)
-        if analisis is None:
+        prompt = construir_prompt(resumen, avisos, perfil, previas, evaluacion, foco, a.cumpli)
+        respuesta, metricas = preguntar_a_nexor(prompt, a.modelo)
+        if respuesta is None:
             print(f"⚠️  {metricas}")
+        else:
+            guardar_memoria(beta, semana, resumen, foco, respuesta.get("reto"), evaluacion, a.cumpli)
 
-    ruta = escribir_reporte(datos, resumen, avisos, analisis, metricas, a.archivo)
+    ruta = escribir_reporte(datos, resumen, avisos, respuesta, metricas, a.archivo, foco, evaluacion, bool(perfil))
     print(f"✅ Reporte: {ruta.relative_to(RAIZ)}")
 
 

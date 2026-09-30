@@ -108,7 +108,7 @@ ollama run nexor --think=false
 | 2 | **NEXOR REGISTER v0.1**: app Android de registro con exportación JSON | ✅ Hecho |
 | 3 | `Modelfile` de NEXOR: system prompt en español que conoce el formato de los registros | 🟡 En curso |
 | 4 | Script de análisis semanal: lee el JSON exportado y genera el informe (`scripts/finanzas.py`) | 🟡 Beta |
-| 5 | Memoria de NEXOR: comparar semanas y seguir la evolución | ⏳ Pendiente |
+| 5 | Mentor con memoria: perfil personal + historial semanal + seguimiento de compromisos | 🟡 Beta |
 | 6 | Sincronización directa entre la app y NEXOR IA, sin exportar a mano | ⏳ Futuro |
 
 ---
@@ -120,6 +120,7 @@ Nexor-IA/
 ├── README.md               ← este archivo
 ├── Modelfile               ← configuración y personalidad de NEXOR
 ├── analizar_semana.bat     ← doble clic: genera el reporte de la semana
+├── perfil.ejemplo.md       ← plantilla: cópiala como perfil.local.md (no se sube)
 ├── scripts/finanzas.py     ← valida el JSON, calcula el resumen y consulta a NEXOR
 ├── datos/                  ← JSON exportados (los reales no se suben)
 ├── reportes/               ← diagnósticos, benchmarks y reportes semanales

@@ -11,3 +11,7 @@ datos/**/*.json
 __pycache__/
 .venv/
 venv/
+
+# NEXOR te conoce: perfil y memoria son personales (no se suben)
+perfil.local.md
+memoria/
