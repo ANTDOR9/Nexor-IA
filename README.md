@@ -8,6 +8,9 @@
 ![App](https://img.shields.io/badge/app-NEXOR%20REGISTER-8b5cf6)
 ![Android](https://img.shields.io/badge/Android-Capacitor%208-ec4899)
 
+[![Reportes](https://img.shields.io/badge/%F0%9F%97%82%EF%B8%8F%20Reportes-Ver%20todos-8b5cf6?style=for-the-badge)](reportes/README.md)
+[![Diagnóstico Fase 1](https://img.shields.io/badge/%F0%9F%93%8A%20Diagn%C3%B3stico-Fase%201%20%C2%B7%20Motor-22d3ee?style=for-the-badge)](reportes/fase-1-diagnostico-motor.md)
+
 ---
 
 ## 📌 ¿Qué es NEXOR?
@@ -87,7 +90,13 @@ ollama run qwen3.5:4b
 
 # 4. Ver el modelo cargado y dónde se está ejecutando
 ollama ps
+
+# 5. Crear NEXOR (usa el Modelfile de este repo) y hablar con él sin thinking
+ollama create nexor -f Modelfile
+ollama run nexor --think=false
 ```
+
+> 💡 En una GPU de 4 GB, Ollama deja por defecto parte del modelo en la CPU. El `Modelfile` fuerza todas las capas a la GPU (`num_gpu 99`). Detalles y mediciones en el [diagnóstico de la Fase 1](reportes/fase-1-diagnostico-motor.md).
 
 ---
 
@@ -95,9 +104,9 @@ ollama ps
 
 | Fase | Descripción | Estado |
 |:---:|---|:---:|
-| 1 | Motor local: Ollama + Qwen3.5 funcionando en español | 🟡 En curso |
+| 1 | Motor local: Ollama + Qwen3.5 funcionando en español · [diagnóstico](reportes/fase-1-diagnostico-motor.md) | ✅ Hecho |
 | 2 | **NEXOR REGISTER v0.1**: app Android de registro con exportación JSON | ✅ Hecho |
-| 3 | `Modelfile` de NEXOR: system prompt en español que conoce el formato de los registros | ⏳ Pendiente |
+| 3 | `Modelfile` de NEXOR: system prompt en español que conoce el formato de los registros | 🟡 En curso |
 | 4 | Script de análisis semanal: lee el JSON exportado y genera el informe | ⏳ Pendiente |
 | 5 | Memoria de NEXOR: comparar semanas y seguir la evolución | ⏳ Pendiente |
 | 6 | Sincronización directa entre la app y NEXOR IA, sin exportar a mano | ⏳ Futuro |
@@ -109,6 +118,8 @@ ollama ps
 ```
 Nexor-IA/
 ├── README.md               ← este archivo
+├── Modelfile               ← configuración y personalidad de NEXOR
+├── reportes/               ← diagnósticos y benchmarks de cada fase
 ├── docs/img/               ← imágenes del README
 └── nexor-register/         ← app Android de registro
     ├── www/                ← la app (HTML, CSS, JS)
@@ -117,7 +128,7 @@ Nexor-IA/
     └── android/            ← proyecto Android (Capacitor)
 ```
 
-A medida que avance NEXOR IA se sumarán `Modelfile`, `scripts/` y los prompts de análisis.
+A medida que avance NEXOR IA se sumarán `scripts/` y los prompts de análisis.
 
 ---
 
@@ -140,4 +151,4 @@ A medida que avance NEXOR IA se sumarán `Modelfile`, `scripts/` y los prompts d
 
 **Anthony** · Arequipa, Perú
 
-<p align="center"><i>Última actualización: 28 de septiembre de 2026</i></p>
+<p align="center"><i>Última actualización: 30 de septiembre de 2026</i></p>
