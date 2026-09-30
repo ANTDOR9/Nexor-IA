@@ -295,3 +295,12 @@ summary { color: var(--tx2); min-height: 40px; display: flex; align-items: cente
   background: var(--grad-soft); border: 1px solid var(--line);
 }
 .in-txt { color: var(--ok); font-size: .9rem; }
+
+/* ---------- Hora 24 h y alertas ---------- */
+.hora24 { display: flex; align-items: center; gap: 6px; }
+.hora24 select { flex: 1; min-width: 0; min-height: 46px; padding: 8px 6px; font-variant-numeric: tabular-nums; color-scheme: dark; }
+.hora24 b { color: var(--tx2); }
+.dur.raro { color: var(--warn); }
+.dur small { display: block; font-size: .82rem; font-weight: 500; color: var(--tx2); margin-top: 2px; }
+.bloque .two { align-items: start; }
+.bloque .two:has(.hora24) { grid-template-columns: 1fr; gap: 0; }

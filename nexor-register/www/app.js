@@ -74,6 +74,61 @@ function horasSueno(dormir, despertar) {
   return r2(d / 60);
 }
 
+// Selector de hora en formato 24 h (el selector nativo de Android usa AM/PM y provoca errores)
+const SUENO_MIN = 3, SUENO_MAX = 12;
+const suenoRaro = h => h != null && (h < SUENO_MIN || h > SUENO_MAX);
+function horaHTML(id, valor) {
+  const [h, m] = valor ? valor.split(':') : ['', ''];
+  const hs = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'));
+  const ms = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0'));
+  const et = x => { const n = Number(x); return `${x}  (${n % 12 || 12} ${n < 12 ? 'am' : 'pm'})`; };
+  return `<div class="hora24" id="${id}">
+    <select class="input" data-p="h" aria-label="Hora"><option value="">--</option>${hs.map(x => `<option value="${x}" ${x === h ? 'selected' : ''}>${et(x)}</option>`).join('')}</select>
+    <b>:</b>
+    <select class="input" data-p="m" aria-label="Minutos"><option value="">--</option>${ms.map(x => `<option value="${x}" ${x === m ? 'selected' : ''}>${x}</option>`).join('')}</select>
+  </div>`;
+}
+function leerHora(root, id) {
+  const w = root.querySelector('#' + id);
+  const h = w.querySelector('[data-p=h]').value;
+  const m = w.querySelector('[data-p=m]').value;
+  return h ? `${h}:${m || '00'}` : '';
+}
+function alCambiarHora(root, id, fn) {
+  root.querySelectorAll(`#${id} select`).forEach(sel => sel.addEventListener('change', () => {
+    const w = root.querySelector('#' + id);
+    const m = w.querySelector('[data-p=m]');
+    if (w.querySelector('[data-p=h]').value && !m.value) m.value = '00';
+    fn();
+  }));
+}
+
+// Alertas de calidad de datos (se exportan para que NEXOR IA no analice datos imposibles)
+function alertasDatos(regs) {
+  const out = [];
+  regs.filter(r => r.tipo === 'cierre_dia' && suenoRaro(r.sueno?.horas)).forEach(c => out.push({
+    tipo: 'sueno_fuera_de_rango', fecha: c.fecha, horas: c.sueno.horas,
+    detalle: `Sueño de ${c.sueno.horas} h (${c.sueno.hora_dormir_anoche}–${c.sueno.hora_despertar}). Rango esperado ${SUENO_MIN}–${SUENO_MAX} h.`
+  }));
+  const porFecha = {};
+  regs.filter(r => r.tipo === 'gasto' && r.hora && r.hora_manual !== true)
+    .forEach(g => { (porFecha[g.fecha] = porFecha[g.fecha] || []).push(g); });
+  Object.entries(porFecha).forEach(([fecha, gs]) => {
+    gs.sort((a, b) => a.hora.localeCompare(b.hora));
+    let i = 0;
+    while (i < gs.length) {
+      let j = i;
+      while (j + 1 < gs.length && minutos(gs[j + 1].hora) - minutos(gs[i].hora) <= 5) j++;
+      if (j - i + 1 >= 3) out.push({
+        tipo: 'posible_registro_tardio', fecha, hora_desde: gs[i].hora, hora_hasta: gs[j].hora, cantidad: j - i + 1,
+        detalle: `${j - i + 1} gastos con hora automática en ${gs[i].hora}–${gs[j].hora}: probablemente se anotaron juntos y la hora no es la real.`
+      });
+      i = j + 1;
+    }
+  });
+  return out.sort((a, b) => a.fecha.localeCompare(b.fecha));
+}
+
 // ---------- IndexedDB ----------
 const DB = {
   db: null,
@@ -133,12 +188,15 @@ function resumen(regs, desde, hasta) {
   const motivos = {};
   gastos.forEach(g => { if (g.motivo) motivos[g.motivo] = (motivos[g.motivo] || 0) + 1; });
   const top = Object.entries(motivos).sort((a, b) => b[1] - a[1])[0];
-  const suenos = cierres.map(c => c.sueno?.horas).filter(h => typeof h === 'number');
+  const suenosTodos = cierres.map(c => c.sueno?.horas).filter(h => typeof h === 'number');
+  const suenos = suenosTodos;
+  const suenosValidos = suenosTodos.filter(h => !suenoRaro(h));
   const fechasReg = new Set([...gastos, ...cierres].map(r => r.fecha));
   return {
     dias_en_rango: dias,
     gasto_total: r2(total),
-    gasto_promedio_diario: r2(total / dias),
+    gasto_promedio_diario: r2(total / Math.max(1, fechasReg.size)),
+    gasto_promedio_base: 'dias_registrados',
     gastos_cantidad: gastos.length,
     por_categoria: porCat,
     chatarra_bebida_total: r2(junk),
@@ -146,8 +204,9 @@ function resumen(regs, desde, hasta) {
     no_planificados_pct: gastos.length ? r2(noPlan / gastos.length * 100) : 0,
     motivos,
     motivo_mas_frecuente: top ? top[0] : null,
-    sueno_promedio_h: suenos.length ? r2(suenos.reduce((a, b) => a + b, 0) / suenos.length) : null,
-    dias_sueno_menor_6_5: suenos.filter(h => h < 6.5).length,
+    sueno_promedio_h: suenosValidos.length ? r2(suenosValidos.reduce((a, b) => a + b, 0) / suenosValidos.length) : null,
+    dias_sueno_menor_6_5: suenos.filter(h => h < 6.5 && !suenoRaro(h)).length,
+    dias_sueno_fuera_de_rango: suenos.filter(suenoRaro).length,
     ingresos_total: r2(ingresos.reduce((a, i) => a + i.monto, 0)),
     dias_registrados: fechasReg.size,
     dias_con_cierre: cierres.length
@@ -396,10 +455,10 @@ function abrirGasto(preset, existente, alGuardar, fechaDia) {
     motivo: null, planificado: false, lugar: '', nota: '',
     fecha: fechaDia || n.fecha, hora: pasado ? '' : n.hora
   };
-  const camposFecha = `<div class="two" style="margin-top:14px">
-        <div><label class="lbl">Fecha</label><input type="date" class="input date" id="g-fecha" value="${r.fecha}"></div>
-        <div><label class="lbl">Hora ${pasado ? '<span class="muted">(opcional)</span>' : ''}</label><input type="time" class="input date" id="g-hora" value="${r.hora || ''}"></div>
-      </div>`;
+  const horaInicial = r.hora || '';
+  const campoFecha = `<label class="lbl">Fecha</label><input type="date" class="input date" id="g-fecha" value="${r.fecha}">`;
+  const campoHora = `<label class="lbl">🕐 Hora del gasto ${pasado ? '<span class="muted">(opcional)</span>'
+      : existente ? '' : '<span class="muted">· si lo anotas tarde, cámbiala</span>'}</label>${horaHTML('g-hora', r.hora)}`;
   const formularioCompleto = !preset;
   const titulo = existente ? 'Editar gasto' : (preset ? preset.item : 'Nuevo gasto');
   const lugaresChips = LUGARES.map(l => [l, l]);
@@ -415,14 +474,15 @@ function abrirGasto(preset, existente, alGuardar, fechaDia) {
     <label class="lbl">¿Planificado?</label>
     <div class="toggle" id="g-plan"><button type="button" data-v="1" class="${r.planificado ? 'on' : ''}">Sí</button>
       <button type="button" data-v="0" class="no ${r.planificado ? '' : 'on'}">No</button></div>
+    ${campoHora}
+    ${pasado ? campoFecha : ''}
     <details ${existente && (r.lugar || r.nota) ? 'open' : ''}><summary>Más opciones (lugar, nota${pasado ? '' : ', fecha'}${formularioCompleto ? '' : ', categoría'})</summary>
       ${formularioCompleto ? '' : `<label class="lbl">Categoría</label>${chipsHTML(CATEGORIAS, r.categoria, 'cat', 'sm')}`}
       <label class="lbl">Lugar</label>${chipsHTML(lugaresChips, r.lugar, 'lugar', 'sm')}
       <input class="input" id="g-lugar" value="${esc(r.lugar)}" placeholder="u otro lugar" style="margin-top:6px">
       <label class="lbl">Nota</label><input class="input" id="g-nota" value="${esc(r.nota)}">
-      ${pasado ? '' : camposFecha}
+      ${pasado ? '' : campoFecha}
     </details>
-    ${pasado ? camposFecha : ''}
     <button class="btn primary full big" id="g-guardar">GUARDAR</button>`;
   abrirHoja(html, root => {
     bindChips(root, 'motivo', v => { r.motivo = v; });
@@ -450,7 +510,10 @@ function abrirGasto(preset, existente, alGuardar, fechaDia) {
       const gasto = {
         id: existente?.id || uuid(), tipo: 'gasto',
         fecha: root.querySelector('#g-fecha').value || r.fecha,
-        hora: root.querySelector('#g-hora').value || (pasado ? null : r.hora),
+        hora: leerHora(root, 'g-hora') || null,
+        hora_manual: existente
+          ? (leerHora(root, 'g-hora') !== horaInicial ? true : (existente.hora_manual ?? null))
+          : (pasado ? !!leerHora(root, 'g-hora') : leerHora(root, 'g-hora') !== n.hora),
         monto, item, categoria: r.categoria, planificado: r.planificado, motivo: r.motivo,
         lugar: root.querySelector('#g-lugar').value.trim() || null,
         nota: root.querySelector('#g-nota').value.trim() || null,
@@ -533,8 +596,8 @@ async function renderCierre(fecha) {
   form.innerHTML = `
     <div class="bloque"><h4>Sueño</h4>
       <div class="two">
-        <div><label class="lbl">Dormí anoche</label><input type="time" class="input date" id="c-dormir" value="${c.sueno.hora_dormir_anoche || ''}"></div>
-        <div><label class="lbl">Desperté</label><input type="time" class="input date" id="c-despertar" value="${c.sueno.hora_despertar || ''}"></div>
+        <div><label class="lbl">Dormí anoche</label>${horaHTML('c-dormir', c.sueno.hora_dormir_anoche)}</div>
+        <div><label class="lbl">Desperté</label>${horaHTML('c-despertar', c.sueno.hora_despertar)}</div>
       </div>
       <div class="dur" id="c-horas"></div>
       <label class="lbl">Calidad del sueño</label>${escala('calidad', c.sueno.calidad)}
@@ -567,13 +630,16 @@ async function renderCierre(fecha) {
     ${existente ? '<button type="button" class="btn danger full" id="c-borrar">Borrar este cierre</button>' : ''}`;
 
   const actualizarHoras = () => {
-    const h = horasSueno(form.querySelector('#c-dormir').value, form.querySelector('#c-despertar').value);
+    const h = horasSueno(leerHora(form, 'c-dormir'), leerHora(form, 'c-despertar'));
     const el = form.querySelector('#c-horas');
-    el.textContent = h == null ? '' : `${h} h de sueño`;
+    el.innerHTML = h == null ? '' : suenoRaro(h)
+      ? `⚠ ${h} h de sueño<small>¿Seguro? Revisa las horas: las 9 de la noche son <b>21</b>, no 09.</small>`
+      : `${h} h de sueño`;
     el.classList.toggle('low', h != null && h < 6.5);
+    el.classList.toggle('raro', suenoRaro(h));
   };
-  form.querySelector('#c-dormir').oninput = actualizarHoras;
-  form.querySelector('#c-despertar').oninput = actualizarHoras;
+  alCambiarHora(form, 'c-dormir', actualizarHoras);
+  alCambiarHora(form, 'c-despertar', actualizarHoras);
   actualizarHoras();
 
   form.querySelectorAll('[data-scale]').forEach(box => box.onclick = e => {
@@ -608,8 +674,13 @@ async function renderCierre(fecha) {
 
   form.onsubmit = async e => {
     e.preventDefault();
-    const dormir = form.querySelector('#c-dormir').value;
-    const despertar = form.querySelector('#c-despertar').value;
+    const dormir = leerHora(form, 'c-dormir');
+    const despertar = leerHora(form, 'c-despertar');
+    const hs = horasSueno(dormir, despertar);
+    if (suenoRaro(hs) && !(await confirmar(`Dormiste ${hs} h según las horas que pusiste (${dormir} → ${despertar}). ¿Es correcto?`, 'Sí, guardar'))) {
+      form.querySelector('#c-dormir').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
     c.sueno.hora_dormir_anoche = dormir || null;
     c.sueno.hora_despertar = despertar || null;
     c.sueno.horas = horasSueno(dormir, despertar);
@@ -645,7 +716,7 @@ async function renderHistorial() {
   const s = resumen(ult7, desde7, h);
   $('#resumen7').innerHTML = `<div class="stats">
     <div class="stat"><small>Gasto total</small><b>${soles(s.gasto_total)}</b></div>
-    <div class="stat"><small>Promedio diario</small><b>${soles(s.gasto_promedio_diario)}</b></div>
+    <div class="stat"><small>Promedio por día registrado</small><b>${soles(s.gasto_promedio_diario)}</b></div>
     <div class="stat"><small>Chatarra + bebida</small><b>${s.chatarra_bebida_pct}%</b> <span class="muted">${soles(s.chatarra_bebida_total)}</span></div>
     <div class="stat"><small>No planificados</small><b>${s.no_planificados_pct}%</b></div>
     <div class="stat"><small>Motivo más frecuente</small><b>${s.motivo_mas_frecuente ? esc(label(MOTIVOS, s.motivo_mas_frecuente)) : '–'}</b></div>
@@ -691,7 +762,7 @@ async function renderHistorial() {
     const c = rs.find(r => r.tipo === 'cierre_dia');
     const hs = c?.sueno?.horas;
     return `<li class="tap" data-f="${f}"><div class="main"><b>${fFecha(f)}${f === h ? ' · hoy' : ''}</b>
-      <small><span class="tag junk">chatarra ${soles(junk)}</span>${hs != null ? `<span class="tag ${hs < 6.5 ? 'bad' : ''}">${hs} h</span>` : ''}<span class="tag ${c ? 'ok' : 'bad'}">${c ? 'cierre ✓' : 'sin cierre'}</span></small></div>
+      <small><span class="tag junk">chatarra ${soles(junk)}</span>${hs != null ? `<span class="tag ${hs < 6.5 || suenoRaro(hs) ? 'bad' : ''}">${suenoRaro(hs) ? '⚠ ' : ''}${hs} h</span>` : ''}<span class="tag ${c ? 'ok' : 'bad'}">${c ? 'cierre ✓' : 'sin cierre'}</span></small></div>
       <span class="amt">${soles(tot)}</span></li>`;
   }).join('');
   ul.onclick = e => { const li = e.target.closest('li[data-f]'); if (li) abrirDia(li.dataset.f); };
@@ -749,6 +820,7 @@ function construirExport(regs, desde, hasta, extra = {}) {
     moneda: 'PEN',
     rango: { desde, hasta },
     resumen: resumen(regs, desde, hasta),
+    alertas: alertasDatos(regs),
     gastos: regs.filter(r => r.tipo === 'gasto').sort(orden),
     ingresos: regs.filter(r => r.tipo === 'ingreso').sort(orden),
     cierres_dia: regs.filter(r => r.tipo === 'cierre_dia').sort(orden),
