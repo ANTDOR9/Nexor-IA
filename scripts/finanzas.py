@@ -30,7 +30,7 @@ from pathlib import Path
 
 # ── Configuración ─────────────────────────────────────────────
 RAIZ = Path(__file__).resolve().parent.parent       # carpeta del repo
-CARPETA_REPORTES = RAIZ / "reportes"
+CARPETA_REPORTES = RAIZ / "reportes" / "semanas"    # reportes semanales: privados (no se suben)
 OLLAMA_URL = "http://localhost:11434"
 MODELO_POR_DEFECTO = "nexor"
 
@@ -39,7 +39,7 @@ ARCHIVO_PERFIL = RAIZ / "perfil.local.md"          # quién eres (no se sube)
 PERFIL_MAX_CARACTERES = 3000                        # ~750 tokens: el contexto es de 4096
 SEMANAS_EN_MEMORIA = 3                              # cuántas semanas previas ve NEXOR
 
-# Referencia del diagnóstico base (27/09/2026): chatarra estimada por semana
+# Referencia inicial de chatarra por semana (del diagnóstico base del usuario)
 CHATARRA_BASE_SEMANAL = 95.0
 
 CATEGORIAS_CHATARRA = {"chatarra", "bebida_azucarada"}
@@ -310,13 +310,13 @@ RETOS = {
         "Comprar el pan del día por la mañana con lista, para no tener que ir a la tienda en la noche",
     ],
     "chatarra_tarde": [
-        "Llevar almuerzo o un táper de casa los días de prácticas o de SENATI largo",
-        "Llevar una botella de agua y una fruta para el recreo o la salida",
+        "Llevar almuerzo o un táper de casa los días largos de trabajo o estudio",
+        "Llevar una botella de agua y una fruta para el descanso o la salida",
         "Planificar el almuerzo del día siguiente la noche anterior y dejarlo listo",
     ],
     "chatarra_mañana": [
         "Desayunar en casa algo rápido (pan con huevo, avena) antes de salir",
-        "Llevar agua desde casa para no comprar gaseosa en el paradero",
+        "Llevar agua desde casa para no comprar bebidas azucaradas en el camino",
         "Preparar el desayuno la noche anterior para no salir con hambre",
     ],
     "sueno": [
@@ -331,7 +331,7 @@ RETOS = {
     ],
     "pantalla": [
         "Activar un límite diario de YouTube o Facebook en Bienestar digital",
-        "Reemplazar 30 minutos de videos en la noche por un bloque de inglés o de proyecto",
+        "Reemplazar 30 minutos de videos en la noche por un bloque de estudio o de proyecto",
         "Dejar el celular fuera del baño y fuera de la mesa",
     ],
 }
@@ -625,7 +625,7 @@ def seccion_mentor(respuesta, metricas, foco, evaluacion, con_perfil):
 
 
 def escribir_reporte(datos, r, avisos, respuesta, metricas, archivo_origen, foco, evaluacion, con_perfil):
-    CARPETA_REPORTES.mkdir(exist_ok=True)
+    CARPETA_REPORTES.mkdir(parents=True, exist_ok=True)
     nombre, semana = nombre_reporte(datos)
     s = lambda v: f"S/ {v:.2f}"
     beta = datos.get("beta")
@@ -633,7 +633,7 @@ def escribir_reporte(datos, r, avisos, respuesta, metricas, archivo_origen, foco
 
     partes = [
         f"# 💰 Semana {semana}{' · BETA' if beta else ''}", "",
-        boton("← Reportes", "README.md", "8b5cf6") + "\n" + boton("Inicio", "../README.md", "ec4899"), "",
+        boton("← Mis semanas", "README.md", "8b5cf6") + "\n" + boton("Inicio", "../../README.md", "ec4899"), "",
         f"> **Periodo:** {desde} a {hasta} · **Días registrados:** {r['dias_registrados']} · "
         f"**Días con cierre:** {r['dias_con_cierre']}",
     ]
@@ -681,11 +681,22 @@ def escribir_reporte(datos, r, avisos, respuesta, metricas, archivo_origen, foco
     return ruta
 
 
+INDICE_SEMANAS = """# 🔒 Mis semanas
+
+""" + "[![Reportes](https://img.shields.io/badge/%E2%86%90%20Reportes-8b5cf6?style=for-the-badge)](../README.md)" + """
+
+Reportes semanales de NEXOR. **Esta carpeta es privada:** está en `.gitignore` y no se sube a GitHub.
+
+| Semana | Periodo | Resumen | |
+|---|---|---|---|
+"""
+
+
 def actualizar_indice(nombre, semana, r, beta, evaluacion):
     """Agrega (o reemplaza) la fila de esta semana en reportes/README.md."""
     indice = CARPETA_REPORTES / "README.md"
     if not indice.exists():
-        return
+        indice.write_text(INDICE_SEMANAS, encoding="utf-8")
     texto = indice.read_text(encoding="utf-8")
     titulo = f"Semana {semana}{' · BETA' if beta else ''}"
     reto_ant = f" · reto anterior {ICONO_RESULTADO.get(evaluacion['resultado'], '')}" if evaluacion else ""

@@ -44,7 +44,7 @@ Este documento describe el archivo que exporta NEXOR REGISTER. Es la referencia 
 | `categoria` | enum | `chatarra`, `bebida_azucarada`, `comida_real`, `transporte`, `salidas`, `tecnologia`, `servicios`, `estudios`, `casa`, `otros` |
 | `planificado` | boolean | `false` = impulso |
 | `motivo` | enum | `hambre`, `antojo`, `aburrimiento`, `estres`, `social`, `necesidad`, `cansancio` |
-| `lugar` | string \| null | "Saliendo de Brighter", "Recreo SENATI", "Casa"… |
+| `lugar` | string \| null | "Trabajo", "Instituto", "Casa"… |
 | `nota` | string \| null | |
 | `creado_en` | ISO | Cuándo se registró en la app |
 | `editado_en` | ISO (opcional) | Solo si se editó después |

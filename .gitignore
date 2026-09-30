@@ -15,3 +15,6 @@ venv/
 # NEXOR te conoce: perfil y memoria son personales (no se suben)
 perfil.local.md
 memoria/
+
+# Reportes semanales: muestran gastos y hábitos reales (no se suben)
+reportes/semanas/

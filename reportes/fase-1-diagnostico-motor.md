@@ -14,7 +14,7 @@
 | Componente | Detalle |
 |---|---|
 | GPU | NVIDIA GeForce GTX 1050 Ti · 4 GB VRAM · driver 582.66 (WDDM) |
-| CPU | Intel Core i3-7100 (2 núcleos / 4 hilos) |
+| CPU | Intel Core i3 |
 | RAM | 16 GB |
 | Sistema | Windows 11 |
 | Motor | Ollama |
