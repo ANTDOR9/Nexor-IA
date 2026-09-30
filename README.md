@@ -78,21 +78,6 @@ python scripts/finanzas.py --cumpli si      # indica si cumpliste el reto anteri
 python scripts/finanzas.py --sin-ia         # solo los números, sin llamar al modelo
 ```
 
----
-
-## 🔒 Privacidad
-
-Todo corre en local: los datos no salen de la PC. Además, estos archivos **nunca se suben a GitHub** (están en `.gitignore`):
-
-| Archivo | Contiene |
-|---|---|
-| `datos/**/*.json` | Registros exportados de la app |
-| `perfil.local.md` | Perfil personal del usuario |
-| `memoria/` | Historial semanal y retos |
-| `reportes/semanas/` | Reportes semanales |
-
----
-
 ## 🤖 Motor de IA
 
 | Herramienta | Uso |
