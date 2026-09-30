@@ -370,7 +370,7 @@ function renderListaRegistros(ul, lista, refrescar, resaltarId) {
       <small>Sueño ${r.sueno?.horas ?? '–'} h · energía ${r.energia ?? '–'} · ánimo ${r.animo ?? '–'}</small></div>
       <div class="acts"><button data-a="edit" aria-label="Editar">✎</button><button data-a="del" aria-label="Borrar">🗑</button></div></li>`;
     return `<li data-id="${r.id}"><div class="main"><b>${esc(r.item)}</b>
-      <small>${esc(r.hora)} · <span class="tag ${JUNK.includes(r.categoria) ? 'junk' : ''}">${esc(label(CATEGORIAS, r.categoria))}</span>${esc(label(MOTIVOS, r.motivo) || '')}${r.planificado ? ' · planificado' : ''}</small></div>
+      <small>${esc(r.hora || 'sin hora')} · <span class="tag ${JUNK.includes(r.categoria) ? 'junk' : ''}">${esc(label(CATEGORIAS, r.categoria))}</span>${esc(label(MOTIVOS, r.motivo) || '')}${r.planificado ? ' · planificado' : ''}</small></div>
       <span class="amt">${soles(r.monto)}</span>
       <div class="acts"><button data-a="edit" aria-label="Editar">✎</button><button data-a="del" aria-label="Borrar">🗑</button></div></li>`;
   }).join('');
@@ -388,17 +388,24 @@ function renderListaRegistros(ul, lista, refrescar, resaltarId) {
   };
 }
 
-function abrirGasto(preset, existente, alGuardar) {
+function abrirGasto(preset, existente, alGuardar, fechaDia) {
   const n = ahora();
+  const pasado = !existente && fechaDia && fechaDia !== n.fecha;
   const r = existente ? { ...existente } : {
     item: preset?.item || '', monto: preset?.monto ?? null, categoria: preset?.categoria || null,
-    motivo: null, planificado: false, lugar: '', nota: '', fecha: n.fecha, hora: n.hora
+    motivo: null, planificado: false, lugar: '', nota: '',
+    fecha: fechaDia || n.fecha, hora: pasado ? '' : n.hora
   };
+  const camposFecha = `<div class="two" style="margin-top:14px">
+        <div><label class="lbl">Fecha</label><input type="date" class="input date" id="g-fecha" value="${r.fecha}"></div>
+        <div><label class="lbl">Hora ${pasado ? '<span class="muted">(opcional)</span>' : ''}</label><input type="time" class="input date" id="g-hora" value="${r.hora || ''}"></div>
+      </div>`;
   const formularioCompleto = !preset;
   const titulo = existente ? 'Editar gasto' : (preset ? preset.item : 'Nuevo gasto');
   const lugaresChips = LUGARES.map(l => [l, l]);
   const html = `
     <h3>${esc(titulo)}</h3>
+    ${pasado ? `<div class="dia-pasado">📅 Registrando para el <b>${esc(fFecha(r.fecha))}</b></div>` : ''}
     <input class="input monto" id="g-monto" inputmode="decimal" placeholder="0.00" value="${r.monto ?? ''}">
     ${formularioCompleto ? `
       <label class="lbl">¿Qué compraste?</label>
@@ -408,16 +415,14 @@ function abrirGasto(preset, existente, alGuardar) {
     <label class="lbl">¿Planificado?</label>
     <div class="toggle" id="g-plan"><button type="button" data-v="1" class="${r.planificado ? 'on' : ''}">Sí</button>
       <button type="button" data-v="0" class="no ${r.planificado ? '' : 'on'}">No</button></div>
-    <details ${existente && (r.lugar || r.nota) ? 'open' : ''}><summary>Más opciones (lugar, nota, fecha${formularioCompleto ? '' : ', categoría'})</summary>
+    <details ${existente && (r.lugar || r.nota) ? 'open' : ''}><summary>Más opciones (lugar, nota${pasado ? '' : ', fecha'}${formularioCompleto ? '' : ', categoría'})</summary>
       ${formularioCompleto ? '' : `<label class="lbl">Categoría</label>${chipsHTML(CATEGORIAS, r.categoria, 'cat', 'sm')}`}
       <label class="lbl">Lugar</label>${chipsHTML(lugaresChips, r.lugar, 'lugar', 'sm')}
       <input class="input" id="g-lugar" value="${esc(r.lugar)}" placeholder="u otro lugar" style="margin-top:6px">
       <label class="lbl">Nota</label><input class="input" id="g-nota" value="${esc(r.nota)}">
-      <div class="two" style="margin-top:14px">
-        <div><label class="lbl">Fecha</label><input type="date" class="input date" id="g-fecha" value="${r.fecha}"></div>
-        <div><label class="lbl">Hora</label><input type="time" class="input date" id="g-hora" value="${r.hora}"></div>
-      </div>
+      ${pasado ? '' : camposFecha}
     </details>
+    ${pasado ? camposFecha : ''}
     <button class="btn primary full big" id="g-guardar">GUARDAR</button>`;
   abrirHoja(html, root => {
     bindChips(root, 'motivo', v => { r.motivo = v; });
@@ -445,7 +450,7 @@ function abrirGasto(preset, existente, alGuardar) {
       const gasto = {
         id: existente?.id || uuid(), tipo: 'gasto',
         fecha: root.querySelector('#g-fecha').value || r.fecha,
-        hora: root.querySelector('#g-hora').value || r.hora,
+        hora: root.querySelector('#g-hora').value || (pasado ? null : r.hora),
         monto, item, categoria: r.categoria, planificado: r.planificado, motivo: r.motivo,
         lugar: root.querySelector('#g-lugar').value.trim() || null,
         nota: root.querySelector('#g-nota').value.trim() || null,
@@ -454,21 +459,23 @@ function abrirGasto(preset, existente, alGuardar) {
       if (existente) gasto.editado_en = new Date().toISOString();
       await DB.put('registros', gasto);
       fx.exito();
-      if (!existente) celebrar = { id: gasto.id, monto, ingreso: false };
+      if (!existente && !alGuardar) celebrar = { id: gasto.id, monto, ingreso: false };
       cerrarHoja();
       if (existente) aviso('Actualizado');
-      else aviso(`Guardado · ${soles(monto)}`, 'Deshacer', async () => {
-        await DB.del('registros', gasto.id); aviso('Deshecho'); refrescarVista();
+      else aviso(`Guardado${gasto.fecha !== n.fecha ? ' en ' + fFecha(gasto.fecha) : ''} · ${soles(monto)}`, 'Deshacer', async () => {
+        await DB.del('registros', gasto.id); aviso('Deshecho'); (alGuardar || refrescarVista)();
       }, 5000);
       (alGuardar || refrescarVista)();
     };
   });
 }
 
-function abrirIngreso(existente, alGuardar) {
-  const r = existente ? { ...existente } : { monto: null, fuente: null, nota: '', fecha: hoy() };
+function abrirIngreso(existente, alGuardar, fechaDia) {
+  const r = existente ? { ...existente } : { monto: null, fuente: null, nota: '', fecha: fechaDia || hoy() };
+  const pasado = !existente && r.fecha !== hoy();
   abrirHoja(`
     <h3>${existente ? 'Editar ingreso' : 'Registrar ingreso'}</h3>
+    ${pasado ? `<div class="dia-pasado">📅 Registrando para el <b>${esc(fFecha(r.fecha))}</b></div>` : ''}
     <input class="input monto" id="i-monto" inputmode="decimal" placeholder="0.00" value="${r.monto ?? ''}">
     <label class="lbl">Fuente</label>${chipsHTML(FUENTES, r.fuente, 'fuente')}
     <label class="lbl">Fecha</label><input type="date" class="input date" id="i-fecha" value="${r.fecha}">
@@ -483,7 +490,7 @@ function abrirIngreso(existente, alGuardar) {
       if (!monto || !r.fuente) { aviso('Completa lo marcado en rojo'); return; }
       const idIng = existente?.id || uuid();
       fx.exito();
-      if (!existente) celebrar = { id: idIng, monto, ingreso: true };
+      if (!existente && !alGuardar) celebrar = { id: idIng, monto, ingreso: true };
       await DB.put('registros', {
         id: idIng, tipo: 'ingreso', fecha: root.querySelector('#i-fecha').value || r.fecha,
         monto, fuente: r.fuente, nota: root.querySelector('#i-nota').value.trim() || null,
@@ -672,31 +679,53 @@ async function renderHistorial() {
   // Lista de días
   const porDia = {};
   todos.forEach(r => { (porDia[r.fecha] = porDia[r.fecha] || []).push(r); });
-  const fechas = Object.keys(porDia).sort().reverse();
+  const fechas = [...new Set([...Object.keys(porDia).filter(f => f <= h), ...dias])].sort().reverse();
   const ul = $('#dias-lista');
-  if (!fechas.length) { ul.innerHTML = '<li class="empty">Todavía no hay registros</li>'; return; }
   ul.innerHTML = fechas.map(f => {
-    const rs = porDia[f];
+    const rs = porDia[f] || [];
+    if (!rs.length) return `<li class="tap vacio" data-f="${f}"><div class="main"><b>${fFecha(f)}${f === h ? ' · hoy' : ''}</b>
+      <small><span class="tag bad">sin registros</span></small></div><span class="amt muted">＋</span></li>`;
     const g = rs.filter(r => r.tipo === 'gasto');
     const tot = g.reduce((a, x) => a + x.monto, 0);
     const junk = g.filter(x => JUNK.includes(x.categoria)).reduce((a, x) => a + x.monto, 0);
     const c = rs.find(r => r.tipo === 'cierre_dia');
     const hs = c?.sueno?.horas;
-    return `<li class="tap" data-f="${f}"><div class="main"><b>${fFecha(f)}</b>
+    return `<li class="tap" data-f="${f}"><div class="main"><b>${fFecha(f)}${f === h ? ' · hoy' : ''}</b>
       <small><span class="tag junk">chatarra ${soles(junk)}</span>${hs != null ? `<span class="tag ${hs < 6.5 ? 'bad' : ''}">${hs} h</span>` : ''}<span class="tag ${c ? 'ok' : 'bad'}">${c ? 'cierre ✓' : 'sin cierre'}</span></small></div>
       <span class="amt">${soles(tot)}</span></li>`;
   }).join('');
   ul.onclick = e => { const li = e.target.closest('li[data-f]'); if (li) abrirDia(li.dataset.f); };
+  const otro = $('#otro-dia');
+  otro.max = h;
+  otro.onchange = () => { if (otro.value && otro.value <= h) abrirDia(otro.value); otro.value = ''; };
 }
 
 async function abrirDia(fecha) {
   const regs = (await DB.rango(fecha, fecha)).sort((a, b) =>
     (a.tipo === 'cierre_dia') - (b.tipo === 'cierre_dia') || (a.hora || '').localeCompare(b.hora || ''));
   const tot = regs.filter(r => r.tipo === 'gasto').reduce((a, x) => a + x.monto, 0);
-  abrirHoja(`<h3>${fFecha(fecha)} · ${soles(tot)}</h3><ul class="lista" id="dia-lista"></ul>
-    <button class="btn secondary full" id="dia-cierre">${regs.some(r => r.tipo === 'cierre_dia') ? 'Ver cierre del día' : 'Hacer cierre de este día'}</button>`, root => {
+  const ing = regs.filter(r => r.tipo === 'ingreso').reduce((a, x) => a + x.monto, 0);
+  const tieneCierre = regs.some(r => r.tipo === 'cierre_dia');
+  const presets = await getPresets();
+  abrirHoja(`<h3>${fFecha(fecha)} · ${soles(tot)}${ing ? ` <span class="in-txt">+${soles(ing)}</span>` : ''}</h3>
+    <ul class="lista" id="dia-lista"></ul>
+    <label class="lbl">Agregar a este día</label>
+    <div class="grid mini" id="dia-presets">
+      ${presets.map(p => `<button class="preset ${JUNK.includes(p.categoria) ? 'junk' : ''}" data-id="${p.id}"><b>${esc(p.item)}</b><i>${p.monto ? soles(p.monto) : 'libre'}</i></button>`).join('')}
+      <button class="preset otro" data-id="otro"><b>Otro</b><i>gasto</i></button>
+      <button class="preset ingreso" data-id="ingreso"><b>Ingreso</b><i>+ dinero</i></button>
+    </div>
+    <button class="btn ${tieneCierre ? 'secondary' : 'primary'} full" id="dia-cierre">${tieneCierre ? 'Ver cierre del día' : 'Terminar este día (cierre)'}</button>`, root => {
     const refrescar = async () => { await renderHistorial(); abrirDia(fecha); };
     renderListaRegistros(root.querySelector('#dia-lista'), regs, refrescar);
+    root.querySelector('#dia-presets').onclick = e => {
+      const b = e.target.closest('.preset');
+      if (!b) return;
+      fx.haptic();
+      if (b.dataset.id === 'ingreso') abrirIngreso(null, refrescar, fecha);
+      else if (b.dataset.id === 'otro') abrirGasto(null, null, refrescar, fecha);
+      else abrirGasto(presets.find(p => p.id === b.dataset.id), null, refrescar, fecha);
+    };
     root.querySelector('#dia-cierre').onclick = () => { cerrarHoja(); $('#cierre-fecha').value = fecha; irA('cierre'); };
   });
 }
@@ -775,7 +804,7 @@ async function exportarJSON() {
 async function exportarCSV() {
   const rg = rangoElegido(); if (!rg) return;
   const g = (await DB.rango(rg[0], rg[1])).filter(r => r.tipo === 'gasto')
-    .sort((a, b) => a.fecha.localeCompare(b.fecha) || a.hora.localeCompare(b.hora) || (a.creado_en || '').localeCompare(b.creado_en || ''));
+    .sort((a, b) => a.fecha.localeCompare(b.fecha) || (a.hora || '').localeCompare(b.hora || '') || (a.creado_en || '').localeCompare(b.creado_en || ''));
   await compartirArchivo(`nexor_register_gastos_${rg[0]}_a_${rg[1]}.csv`, csvGastos(g), 'text/csv');
   $('#exp-info').textContent = `CSV: ${g.length} gastos.`;
 }

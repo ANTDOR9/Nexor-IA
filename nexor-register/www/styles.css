@@ -278,3 +278,20 @@ summary { color: var(--tx2); min-height: 40px; display: flex; align-items: cente
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
   .fx-layer { display: none; }
 }
+
+/* ---------- Historial: agregar a días pasados ---------- */
+.dias-head { margin: 22px 0 8px; }
+.dias-head h3.sub { margin: 0; }
+.otro-dia { display: flex; align-items: center; gap: 6px; font-size: .8rem; color: var(--tx2); }
+.otro-dia .input.date { min-height: 36px; padding: 4px 8px; font-size: .85rem; }
+.lista li.vacio { border-style: dashed; opacity: .75; }
+.grid.mini { grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.grid.mini .preset { min-height: 58px; padding: 6px 4px; }
+.grid.mini .preset b { font-size: .78rem; }
+.grid.mini .preset i { font-size: .72rem; }
+.preset.ingreso { border-left: 4px solid var(--ok); }
+.dia-pasado {
+  margin: -4px 0 12px; padding: 8px 12px; border-radius: 10px; font-size: .9rem;
+  background: var(--grad-soft); border: 1px solid var(--line);
+}
+.in-txt { color: var(--ok); font-size: .9rem; }
